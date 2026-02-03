@@ -39,3 +39,7 @@ go.work
 go.work.sum
 .env
 build/
+
+# Vendored dependencies should be committed.
+!vendor/
+!vendor/**

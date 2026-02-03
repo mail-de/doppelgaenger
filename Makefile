@@ -10,10 +10,11 @@ LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 all: build
 
 build:
-	go build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_NAME) main.go
+	mkdir -p build
+	go build $(GOFLAGS) $(LDFLAGS) -o build/$(BINARY_NAME) main.go
 
 clean:
-	rm -f $(BINARY_NAME)
+	rm -f build/$(BINARY_NAME)
 
 test:
 	go test $(GOFLAGS) -v ./...
