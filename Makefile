@@ -2,7 +2,7 @@ BINARY_NAME=httpproxy
 VERSION=$(shell git describe --tags --always --dirty)
 GO_FILES=$(shell find . -name "*.go" -not -path "./vendor/*")
 SBOM_FILE=sbom.cdx.json
-SBOM_TOOL=github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+SBOM_TOOL=github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
 export GOENV=greenteagc
 GOFLAGS=-mod=vendor
 LDFLAGS=-ldflags "-X main.version=$(VERSION)"

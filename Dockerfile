@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 ARG VERSION=dev
 
@@ -11,9 +11,9 @@ ENV GOENV=greenteagc
 # Copy source code and vendor directory
 COPY . .
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 
-RUN go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+RUN go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
 
 RUN /go/bin/cyclonedx-gomod mod -output /app/sbom.cdx.json -json
 

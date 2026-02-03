@@ -66,7 +66,7 @@ The application is configured via environment variables:
 ## Building and Running
 
 ### Prerequisites
-- Go 1.21 or later
+- Go 1.25 or later
 
 ### Build
 ```bash
