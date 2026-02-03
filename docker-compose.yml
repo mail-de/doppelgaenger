@@ -1,0 +1,17 @@
+services:
+  httpproxy:
+    build: .
+    ports:
+      - "8443:8443"
+    environment:
+      - LISTEN=:8443
+      - PRIMARY=https://primary.example.com
+      - SHADOW=https://shadow.example.com
+      - TLS_CERT=/certs/cert.pem
+      - TLS_KEY=/certs/key.pem
+      # - PRIMARY_WORKERS=32
+      # - SHADOW_WORKERS=16
+      # - SHADOW_SAMPLE_PERCENT=5
+    volumes:
+      - ./certs:/certs:ro
+    restart: unless-stopped

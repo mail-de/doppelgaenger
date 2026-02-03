@@ -1,0 +1,25 @@
+[Unit]
+Description=HTTP Proxy with Shadowing
+After=network.target
+
+[Service]
+Type=simple
+User=httpproxy
+Group=httpproxy
+EnvironmentFile=-/etc/default/httpproxy
+Environment=LISTEN=:8443
+Environment=PRIMARY=https://primary.example.com
+Environment=SHADOW=https://shadow.example.com
+Environment=TLS_CERT=/etc/httpproxy/cert.pem
+Environment=TLS_KEY=/etc/httpproxy/key.pem
+ExecStart=/usr/local/bin/httpproxy
+Restart=on-failure
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
