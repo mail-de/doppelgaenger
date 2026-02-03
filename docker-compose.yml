@@ -1,6 +1,12 @@
 services:
   httpproxy:
     build: .
+    user: "1000:1000"
+    mem_limit: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - apparmor:docker-default
     ports:
       - "8443:8443"
     environment:

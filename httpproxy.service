@@ -20,6 +20,18 @@ NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
 PrivateTmp=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
