@@ -57,7 +57,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -1018,13 +1017,17 @@ func main() {
 	// Graceful shutdown
 	go func() {
 		// start server
-		log.Printf("httpproxy %s starting...\n", version)
-		log.Printf("listening on https://%s (HTTP/2 via ALPN)\n", cfg.ListenAddr)
-		log.Printf("primary=%s shadow=%s\n", cfg.PrimaryBaseURL, cfg.ShadowBaseURL)
+		slog.Info("httpproxy starting", "version", version)
+		slog.Info("listening", "addr", "https://"+cfg.ListenAddr, "proto", "HTTP/2 via ALPN")
+		slog.Info("backends", "primary", cfg.PrimaryBaseURL.String(), "shadow", cfg.ShadowBaseURL.String())
 
 		if cfg.RootCAPath != "" || cfg.PrimaryRootCA != "" || cfg.ShadowRootCA != "" {
-			log.Printf("upstream CA: root=%q primary=%q shadow=%q insecure=%v\n",
-				cfg.RootCAPath, cfg.PrimaryRootCA, cfg.ShadowRootCA, cfg.InsecureUpstream)
+			slog.Info("upstream CA",
+				"root", cfg.RootCAPath,
+				"primary", cfg.PrimaryRootCA,
+				"shadow", cfg.ShadowRootCA,
+				"insecure", cfg.InsecureUpstream,
+			)
 		}
 
 		if err := srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
