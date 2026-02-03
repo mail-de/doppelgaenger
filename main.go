@@ -8,6 +8,7 @@ import (
 	"go.uber.org/fx/fxevent"
 
 	"httpproxy/internal/app"
+	"httpproxy/internal/compare"
 	"httpproxy/internal/config"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/server"
@@ -27,6 +28,7 @@ func main() {
 			app.NewUpstreamTLS,
 			app.NewBackendPools,
 			app.NewShadowLimiter,
+			compare.NewComparator,
 			proxy.NewHandler,
 			fx.Annotate(proxy.NewRouter, fx.As(new(http.Handler))),
 			server.NewServer,

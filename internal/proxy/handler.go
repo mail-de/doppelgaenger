@@ -18,6 +18,7 @@ import (
 	"go.uber.org/fx"
 
 	"httpproxy/internal/backend"
+	"httpproxy/internal/compare"
 	"httpproxy/internal/config"
 	"httpproxy/internal/headers"
 	"httpproxy/internal/ratelimit"
@@ -30,6 +31,7 @@ type Handler struct {
 	shadowPool    backend.Pool
 	shadowLimiter ratelimit.Limiter
 	logger        *slog.Logger
+	comparator    compare.Comparator
 
 	requestID atomic.Uint64
 	randMu    sync.Mutex
@@ -44,6 +46,7 @@ type HandlerDeps struct {
 	ShadowPool    backend.Pool `name:"shadowPool"`
 	ShadowLimiter ratelimit.Limiter
 	Logger        *slog.Logger
+	Comparator    compare.Comparator
 }
 
 // NewHandler constructs a proxy handler with its dependencies.
@@ -54,6 +57,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		shadowPool:    deps.ShadowPool,
 		shadowLimiter: deps.ShadowLimiter,
 		logger:        deps.Logger,
+		comparator:    deps.Comparator,
 		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -207,7 +211,14 @@ func (h *Handler) Handle(c *gin.Context) {
 		shadowErr = "shadow_not_started"
 	}
 
-	pKV, sKV, diffs, hasDiff := headers.CompareDetailed(primaryRes.Header, shadowRes.Header, h.cfg.CompareHeaders, false)
+	compareResult, compareErr := h.comparator.Compare(primaryRes, shadowRes)
+	pKV := compareResult.HeaderPrimary
+	sKV := compareResult.HeaderShadow
+	diffs := compareResult.HeaderDiffs
+	hasDiff := compareResult.Diff
+	if compareErr != nil {
+		hasDiff = true
+	}
 
 	if h.cfg.LogSessionOnlyOnDiff && !hasDiff && !forcedShadow {
 		delete(pKV, "X-Nauthilus-Session")
@@ -248,8 +259,13 @@ func (h *Handler) Handle(c *gin.Context) {
 		"shadow_err", shadowErr,
 		"shadow_headers", sKV,
 
+		"compare_mode", compareResult.Mode,
 		"diff", hasDiff,
 		"diffs", diffs,
+		"body_diff", compareResult.BodyDiff,
+		"json_diffs", compareResult.JSONDiffs,
+		"html_similarity", compareResult.HTMLSimilarity,
+		"compare_err", errString(compareErr),
 	)
 }
 

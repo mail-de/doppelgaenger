@@ -11,13 +11,51 @@ services:
       - "8443:8443"
     environment:
       - LISTEN=:8443
-      - PRIMARY=https://primary.example.com
-      - SHADOW=https://shadow.example.com
+      - PRIMARY=http://fakeserver-primary:9001
+      - SHADOW=http://fakeserver-shadow:9002
       - TLS_CERT=/certs/cert.pem
       - TLS_KEY=/certs/key.pem
+      - LOG_JSON=false
       # - PRIMARY_WORKERS=32
       # - SHADOW_WORKERS=16
       # - SHADOW_SAMPLE_PERCENT=5
     volumes:
       - ./certs:/certs:ro
+    restart: unless-stopped
+
+  fakeserver-primary:
+    build:
+      context: .
+      dockerfile: Dockerfile.faker
+    user: "1000:1000"
+    mem_limit: 128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - apparmor:docker-default
+    ports:
+      - "9001:9001"
+    environment:
+      - FAKE_LISTEN=:9001
+      - FAKE_MODE=echo
+      - LOG_JSON=false
+    restart: unless-stopped
+
+  fakeserver-shadow:
+    build:
+      context: .
+      dockerfile: Dockerfile.faker
+    user: "1000:1000"
+    mem_limit: 128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - apparmor:docker-default
+    ports:
+      - "9002:9002"
+    environment:
+      - FAKE_LISTEN=:9002
+      - FAKE_MODE=random
+      - FAKE_RANDOM_CHANCE=20
+      - LOG_JSON=false
     restart: unless-stopped

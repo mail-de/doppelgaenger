@@ -72,6 +72,15 @@ type Config struct {
 	// CompareHeaders list of headers compared between primary and shadow backends.
 	CompareHeaders []string
 
+	// CompareMode selects the comparison mode (nginx, header, json, html).
+	CompareMode string
+
+	// JSONStrict controls strict JSON comparison behavior.
+	JSONStrict bool
+
+	// HTMLSimilarityThreshold defines the required similarity for HTML comparison (0.0-1.0).
+	HTMLSimilarityThreshold float64
+
 	// LogSessionOnlyOnDiff controls whether session headers are logged only when there are differences.
 	LogSessionOnlyOnDiff bool
 
@@ -133,6 +142,10 @@ func Load() (Config, error) {
 			"X-Nauthilus-Session",
 		},
 
+		CompareMode:             getenv("COMPARE_MODE", "nginx"),
+		JSONStrict:              getenvBool("COMPARE_JSON_STRICT", false),
+		HTMLSimilarityThreshold: getenvFloat("COMPARE_HTML_THRESHOLD", 0.99),
+
 		LogSessionOnlyOnDiff: getenvBool("LOG_SESSION_ONLY_ON_DIFF", true),
 		MaxBackendBodyBytes:  32 * 1024,
 
@@ -152,6 +165,19 @@ func Load() (Config, error) {
 
 	if cfg.ShadowBurst < 1 && cfg.ShadowRPS > 0 {
 		cfg.ShadowBurst = 1
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))
+	if mode == "" || mode == "header" || mode == "nxinx" {
+		mode = "nginx"
+	}
+	cfg.CompareMode = mode
+
+	if cfg.HTMLSimilarityThreshold < 0 {
+		cfg.HTMLSimilarityThreshold = 0
+	}
+	if cfg.HTMLSimilarityThreshold > 1 {
+		cfg.HTMLSimilarityThreshold = 1
 	}
 
 	return cfg, nil
