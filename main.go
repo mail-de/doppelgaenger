@@ -10,6 +10,7 @@ import (
 	"httpproxy/internal/app"
 	"httpproxy/internal/compare"
 	"httpproxy/internal/config"
+	"httpproxy/internal/milterproxy"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/server"
 )
@@ -29,10 +30,16 @@ func main() {
 			app.NewBackendPools,
 			app.NewShadowLimiter,
 			compare.NewComparator,
+			app.NewProtocolAdapter,
+			app.NewProtocolComparator,
+			app.NewProtocolRunner,
 			proxy.NewHandler,
 			fx.Annotate(proxy.NewRouter, fx.As(new(http.Handler))),
 			server.NewServer,
+			milterproxy.NewHandler,
+			milterproxy.NewServer,
 		),
 		fx.Invoke(server.RegisterHooks),
+		fx.Invoke(milterproxy.RegisterHooks),
 	).Run()
 }

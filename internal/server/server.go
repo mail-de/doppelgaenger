@@ -27,6 +27,9 @@ func NewServer(cfg config.Config, handler http.Handler) *http.Server {
 func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
+			if cfg.Protocol != "http" {
+				return nil
+			}
 			if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
 				return errors.New("TLS_CERT and TLS_KEY must be set for HTTPS/HTTP2 inbound")
 			}

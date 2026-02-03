@@ -5,6 +5,7 @@ A high-performance HTTP proxy written in Go that mirrors a percentage of incomin
 ## Features
 
 - **Traffic Shadowing**: Mirrored requests to a shadow backend without affecting the primary response.
+- **Protocol Modes**: Supports HTTP shadow proxying and a TCP Milter proxy for mail filter testing.
 - **Sampling & Rate Limiting**: Configure the percentage of traffic to shadow and apply rate limits (RPS/Burst) to protect the shadow environment.
 - **Response Comparison**: Compares headers and optional payloads between primary and shadow responses and logs differences.
 - **Structured Logging**: Uses `slog` for detailed, machine-readable logs including performance metrics and header diffs.
@@ -18,9 +19,18 @@ The application is configured via environment variables:
 ### General
 | Variable   | Description                  | Default    |
 |------------|------------------------------|------------|
+| `PROTOCOL` | `http` or `milter`            | `http`     |
 | `LISTEN`   | Listen address for the proxy | `:8443`    |
 | `TLS_CERT` | Path to TLS certificate file | (optional) |
 | `TLS_KEY`  | Path to TLS key file         | (optional) |
+
+### Milter
+| Variable          | Description                               | Default            |
+|-------------------|-------------------------------------------|--------------------|
+| `MILTER_LISTEN`   | Listen address for the Milter proxy       | `:9999`            |
+| `MILTER_PRIMARY`  | Address of the primary Milter backend     | `127.0.0.1:9997`    |
+| `MILTER_SHADOW`   | Address of the shadow Milter backend      | `127.0.0.1:9998`    |
+| `MILTER_TIMEOUT`  | Timeout for Milter upstream operations    | `2s`               |
 
 ### Upstream Backends
 | Variable            | Description                              | Default                  |
@@ -88,6 +98,9 @@ The fake server is a standalone program intended to act as primary and shadow ba
 4. **Shadow Request**: If selected, the request is sent to the `SHADOW` backend asynchronously.
 5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `COMPARE_MODE`.
 6. **Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found.
+
+### Milter Mode
+When `PROTOCOL=milter`, the proxy listens on `MILTER_LISTEN` and forwards incoming Milter frames to the primary backend, mirrors them to the shadow backend, compares decisions/raw frames, and logs any differences.
 
 ## Building and Running
 

@@ -12,6 +12,8 @@ import (
 
 // Config holds all configuration settings for the proxy.
 type Config struct {
+	// Protocol selects the proxy protocol (http or milter).
+	Protocol string
 	// PrimaryBaseURL is the base URL for the primary backend that provides client responses.
 	PrimaryBaseURL *url.URL
 
@@ -26,6 +28,18 @@ type Config struct {
 
 	// ListenAddr is the address the proxy listens on (e.g., ":8443").
 	ListenAddr string
+
+	// MilterListenAddr is the TCP address for the Milter proxy listener.
+	MilterListenAddr string
+
+	// PrimaryMilterAddr is the address of the primary Milter backend.
+	PrimaryMilterAddr string
+
+	// ShadowMilterAddr is the address of the shadow Milter backend.
+	ShadowMilterAddr string
+
+	// MilterTimeout is the timeout for Milter upstream operations.
+	MilterTimeout time.Duration
 
 	// TLSCertFile path to the TLS certificate file for the proxy server.
 	TLSCertFile string
@@ -100,14 +114,28 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid SHADOW URL: %w", err)
 	}
 
+	protocol := strings.ToLower(strings.TrimSpace(getenv("PROTOCOL", "http")))
+	if protocol == "" {
+		protocol = "http"
+	}
+	if protocol != "http" && protocol != "milter" {
+		return Config{}, fmt.Errorf("invalid PROTOCOL: %s", protocol)
+	}
+
 	cfg := Config{
-		ListenAddr: getenv("LISTEN", ":8443"),
+		Protocol: protocol,
+
+		ListenAddr:       getenv("LISTEN", ":8443"),
+		MilterListenAddr: getenv("MILTER_LISTEN", ":9999"),
 
 		TLSCertFile: getenv("TLS_CERT", ""),
 		TLSKeyFile:  getenv("TLS_KEY", ""),
 
-		PrimaryBaseURL: primaryURL,
-		ShadowBaseURL:  shadowURL,
+		PrimaryBaseURL:    primaryURL,
+		ShadowBaseURL:     shadowURL,
+		PrimaryMilterAddr: getenv("MILTER_PRIMARY", "127.0.0.1:9997"),
+		ShadowMilterAddr:  getenv("MILTER_SHADOW", "127.0.0.1:9998"),
+		MilterTimeout:     getenvDuration("MILTER_TIMEOUT", 2*time.Second),
 
 		PrimaryWorkers:  getenvInt("PRIMARY_WORKERS", 32),
 		ShadowWorkers:   getenvInt("SHADOW_WORKERS", 16),

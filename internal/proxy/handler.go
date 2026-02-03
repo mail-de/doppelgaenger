@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,21 +16,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/compare"
 	"httpproxy/internal/config"
 	"httpproxy/internal/headers"
+	"httpproxy/internal/protocol"
 	"httpproxy/internal/ratelimit"
 )
 
 // Handler handles incoming proxy requests.
 type Handler struct {
 	cfg           config.Config
-	primaryPool   backend.Pool
-	shadowPool    backend.Pool
+	adapter       protocol.ProtocolAdapter
+	runner        protocol.Runner
 	shadowLimiter ratelimit.Limiter
 	logger        *slog.Logger
-	comparator    compare.Comparator
 
 	requestID atomic.Uint64
 	randMu    sync.Mutex
@@ -42,22 +39,20 @@ type Handler struct {
 type HandlerDeps struct {
 	fx.In
 	Config        config.Config
-	PrimaryPool   backend.Pool `name:"primaryPool"`
-	ShadowPool    backend.Pool `name:"shadowPool"`
+	Adapter       protocol.ProtocolAdapter
+	Runner        protocol.Runner
 	ShadowLimiter ratelimit.Limiter
 	Logger        *slog.Logger
-	Comparator    compare.Comparator
 }
 
 // NewHandler constructs a proxy handler with its dependencies.
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{
 		cfg:           deps.Config,
-		primaryPool:   deps.PrimaryPool,
-		shadowPool:    deps.ShadowPool,
+		adapter:       deps.Adapter,
+		runner:        deps.Runner,
 		shadowLimiter: deps.ShadowLimiter,
 		logger:        deps.Logger,
-		comparator:    deps.Comparator,
 		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -88,9 +83,6 @@ func (h *Handler) Handle(c *gin.Context) {
 		hdr.Set("X-Forwarded-Proto", "https")
 	}
 
-	primaryCh := make(chan backend.BackendResult, 1)
-	shadowCh := make(chan backend.BackendResult, 1)
-
 	forcedShadow := false
 	if h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != "" {
 		forcedShadow = true
@@ -111,46 +103,8 @@ func (h *Handler) Handle(c *gin.Context) {
 		doShadow = false
 	}
 
-	shadowStarted := false
-	var shadowCtx context.Context
-	var shadowCancel context.CancelFunc
-
-	if doShadow {
-		shadowCtx, shadowCancel = context.WithTimeout(c.Request.Context(), h.cfg.ShadowTimeout)
-		defer shadowCancel()
-
-		shadowItem := backend.WorkItem{
-			Kind:       backend.BackendShadow,
-			Method:     method,
-			Path:       path,
-			RawQuery:   rawQuery,
-			Header:     hdr,
-			Body:       body,
-			RemoteAddr: remoteAddr,
-			RequestID:  reqID,
-			Ctx:        shadowCtx,
-			ResponseCh: shadowCh,
-		}
-
-		if err := h.shadowPool.Enqueue(shadowItem); err == nil {
-			shadowStarted = true
-		}
-	}
-
-	primaryItem := backend.WorkItem{
-		Kind:       backend.BackendPrimary,
-		Method:     method,
-		Path:       path,
-		RawQuery:   rawQuery,
-		Header:     hdr,
-		Body:       body,
-		RemoteAddr: remoteAddr,
-		RequestID:  reqID,
-		Ctx:        c.Request.Context(),
-		ResponseCh: primaryCh,
-	}
-
-	if err := h.primaryPool.Enqueue(primaryItem); err != nil {
+	primarySession, err := h.adapter.NewSession(c.Request.Context(), protocol.TargetPrimary)
+	if err != nil {
 		h.logger.Error("primary_enqueue_failed",
 			"req_id", reqID,
 			"x_request_id", corrID,
@@ -164,7 +118,43 @@ func (h *Handler) Handle(c *gin.Context) {
 		return
 	}
 
-	primaryRes := <-primaryCh
+	defer func() {
+		_ = primarySession.Close()
+	}()
+
+	shadowStarted := false
+	shadowSession := protocol.TestSession(nil)
+	var shadowCancel context.CancelFunc
+	if doShadow {
+		shadowCtx := c.Request.Context()
+		shadowCtx, shadowCancel = context.WithTimeout(c.Request.Context(), h.cfg.ShadowTimeout)
+		shadowSession, err = h.adapter.NewSession(shadowCtx, protocol.TargetShadow)
+		if err == nil {
+			shadowStarted = true
+		}
+	}
+	if shadowCancel != nil {
+		defer shadowCancel()
+	}
+	if shadowSession != nil {
+		defer func() {
+			_ = shadowSession.Close()
+		}()
+	}
+
+	event := protocol.Event{
+		Kind:       "http",
+		Method:     method,
+		Path:       path,
+		RawQuery:   rawQuery,
+		Header:     hdr,
+		Body:       body,
+		RemoteAddr: remoteAddr,
+		RequestID:  reqID,
+	}
+
+	result := h.runner.RunEvent(c.Request.Context(), primarySession, shadowSession, event)
+	primaryRes := result.Primary
 	if primaryRes.Err != nil {
 		h.logger.Error("primary_request_failed",
 			"req_id", reqID,
@@ -188,30 +178,15 @@ func (h *Handler) Handle(c *gin.Context) {
 		_, _ = c.Writer.Write(primaryRes.Body)
 	}
 
-	var shadowRes backend.BackendResult
-	shadowOK := false
-	shadowErr := ""
-
-	if shadowStarted {
-		select {
-		case shadowRes = <-shadowCh:
-			shadowOK = shadowRes.Err == nil
-			shadowErr = errString(shadowRes.Err)
-		case <-shadowCtx.Done():
-			shadowRes = backend.BackendResult{
-				Kind:      backend.BackendShadow,
-				Err:       shadowCtx.Err(),
-				Duration:  h.cfg.ShadowTimeout,
-				RequestID: reqID,
-			}
-			shadowOK = false
-			shadowErr = errString(shadowRes.Err)
-		}
-	} else if doShadow {
+	shadowRes := result.Shadow
+	shadowOK := result.ShadowOK
+	shadowErr := result.ShadowErr
+	if doShadow && !shadowStarted {
 		shadowErr = "shadow_not_started"
 	}
 
-	compareResult, compareErr := h.comparator.Compare(primaryRes, shadowRes)
+	compareResult := result.Compare
+	compareErr := result.CompareErr
 	pKV := compareResult.HeaderPrimary
 	sKV := compareResult.HeaderShadow
 	diffs := compareResult.HeaderDiffs
@@ -265,7 +240,7 @@ func (h *Handler) Handle(c *gin.Context) {
 		"body_diff", compareResult.BodyDiff,
 		"json_diffs", compareResult.JSONDiffs,
 		"html_similarity", compareResult.HTMLSimilarity,
-		"compare_err", errString(compareErr),
+		"compare_err", protocol.ErrString(compareErr),
 	)
 }
 
@@ -297,22 +272,6 @@ func (h *Handler) ensureRequestID(header http.Header) (rid string, generated boo
 	header.Set("X-Request-ID", rid)
 
 	return rid, true
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "deadline_exceeded"
-	}
-
-	if errors.Is(err, context.Canceled) {
-		return "canceled"
-	}
-
-	return err.Error()
 }
 
 func clientIP(r *http.Request) string {
