@@ -73,6 +73,12 @@ The application is configured via environment variables:
 go build -o httpproxy main.go
 ```
 
+### SBOM
+```bash
+make sbom
+```
+Generates `sbom.cdx.json` in the project directory. During the Docker image build, the SBOM is copied into the image as `/app/sbom.cdx.json`.
+
 ### Run
 ```bash
 export PRIMARY="https://api.production.internal"

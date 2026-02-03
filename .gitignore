@@ -39,6 +39,7 @@ go.work
 go.work.sum
 .env
 build/
+sbom.cdx.json
 
 # Vendored dependencies should be committed.
 !vendor/

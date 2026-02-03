@@ -1,11 +1,13 @@
 BINARY_NAME=httpproxy
 VERSION=$(shell git describe --tags --always --dirty)
 GO_FILES=$(shell find . -name "*.go" -not -path "./vendor/*")
+SBOM_FILE=sbom.cdx.json
+SBOM_TOOL=github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
 export GOENV=greenteagc
 GOFLAGS=-mod=vendor
 LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 
-.PHONY: all build clean test docker-build docker-run
+.PHONY: all build clean test docker-build docker-run sbom
 
 all: build
 
@@ -24,3 +26,6 @@ docker-build:
 
 docker-run:
 	docker run -p 8443:8443 $(BINARY_NAME)
+
+sbom:
+	go run $(SBOM_TOOL) mod -output $(SBOM_FILE) -json
