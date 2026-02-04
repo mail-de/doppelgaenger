@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/app"
-	"httpproxy/internal/config"
+	"doppelgaenger/internal/app"
+	"doppelgaenger/internal/config"
 )
 
 type Server struct {

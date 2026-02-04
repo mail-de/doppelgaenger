@@ -1,4 +1,4 @@
-module httpproxy
+module doppelgaenger
 
 go 1.25
 

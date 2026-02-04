@@ -10,10 +10,10 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/config"
-	"httpproxy/internal/ratelimit"
-	"httpproxy/internal/tlsutil"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/ratelimit"
+	"doppelgaenger/internal/tlsutil"
 )
 
 // Version is the application version string.

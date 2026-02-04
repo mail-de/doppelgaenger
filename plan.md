@@ -1,5 +1,5 @@
 Kurzantwort
-Ja, das lässt sich sauber erweitern, wenn httpproxy als generisches „Protokoll‑Test‑Proxy“-Framework aufgebaut wird. Die Idee: ein gemeinsames Test‑Orchestrierungs‑Interface, pro Protokoll eine eigene Implementierung (HTTP, Milter), und ein einheitliches Compare‑/Result‑Modul, das Primary vs. Shadow auswertet.
+Ja, das lässt sich sauber erweitern, wenn doppelgaenger als generisches „Protokoll‑Test‑Proxy“-Framework aufgebaut wird. Die Idee: ein gemeinsames Test‑Orchestrierungs‑Interface, pro Protokoll eine eigene Implementierung (HTTP, Milter), und ein einheitliches Compare‑/Result‑Modul, das Primary vs. Shadow auswertet.
 Vorschlag für eine saubere OOP‑Erweiterung
 1) Gemeinsames Test‑Interface
    Definiere ein Protokoll‑agnostisches Interface, z. B.:

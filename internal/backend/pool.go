@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"httpproxy/internal/headers"
+	"doppelgaenger/internal/headers"
 )
 
 // BackendKind distinguishes between primary and shadow backends.

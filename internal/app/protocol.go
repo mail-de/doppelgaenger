@@ -5,10 +5,10 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/compare"
-	"httpproxy/internal/config"
-	"httpproxy/internal/protocol"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/compare"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/protocol"
 )
 
 type ProtocolAdapterDeps struct {

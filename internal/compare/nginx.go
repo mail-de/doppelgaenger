@@ -3,7 +3,7 @@ package compare
 import (
 	"log/slog"
 
-	"httpproxy/internal/backend"
+	"doppelgaenger/internal/backend"
 )
 
 type nginxComparator struct {

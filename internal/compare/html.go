@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/net/html"
 
-	"httpproxy/internal/backend"
+	"doppelgaenger/internal/backend"
 )
 
 type htmlComparator struct {

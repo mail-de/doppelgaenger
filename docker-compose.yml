@@ -1,5 +1,5 @@
 services:
-  httpproxy:
+  doppelgaenger:
     build: .
     user: "1000:1000"
     mem_limit: 256m
@@ -11,8 +11,8 @@ services:
       - "8443:8443"
     environment:
       - LISTEN=:8443
-      - PRIMARY=http://fakeserver-primary:9001
-      - SHADOW=http://fakeserver-shadow:9002
+      - PRIMARY=http://fakehttpserver-primary:9001
+      - SHADOW=http://fakehttpserver-shadow:9002
       - TLS_CERT=/certs/cert.pem
       - TLS_KEY=/certs/key.pem
       - LOG_JSON=false
@@ -23,7 +23,7 @@ services:
       - ./certs:/certs:ro
     restart: unless-stopped
 
-  fakeserver-primary:
+  fakehttpserver-primary:
     build:
       context: .
       dockerfile: Dockerfile.faker
@@ -41,7 +41,7 @@ services:
       - LOG_JSON=false
     restart: unless-stopped
 
-  fakeserver-shadow:
+  fakehttpserver-shadow:
     build:
       context: .
       dockerfile: Dockerfile.faker

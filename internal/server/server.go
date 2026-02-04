@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/app"
-	"httpproxy/internal/config"
+	"doppelgaenger/internal/app"
+	"doppelgaenger/internal/config"
 )
 
 // NewServer constructs the HTTP server.
@@ -33,7 +33,7 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 			if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
 				return errors.New("TLS_CERT and TLS_KEY must be set for HTTPS/HTTP2 inbound")
 			}
-			logger.Info("httpproxy starting", "version", string(version))
+			logger.Info("doppelgaenger starting", "version", string(version))
 			logger.Info("listening", "addr", "https://"+cfg.ListenAddr, "proto", "HTTP/2 via ALPN")
 			logger.Info("backends", "primary", cfg.PrimaryBaseURL.String(), "shadow", cfg.ShadowBaseURL.String())
 

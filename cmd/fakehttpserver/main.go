@@ -7,8 +7,8 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
-	"httpproxy/internal/app"
-	"httpproxy/internal/fakeserver"
+	"doppelgaenger/internal/app"
+	"doppelgaenger/internal/fakehttpserver"
 )
 
 var version = "dev"
@@ -21,10 +21,10 @@ func main() {
 		fx.Supply(app.Version(version)),
 		fx.Provide(
 			app.NewLogger,
-			fakeserver.Load,
-			fx.Annotate(fakeserver.NewHandler, fx.As(new(http.Handler))),
-			fakeserver.NewServer,
+			fakehttpserver.Load,
+			fx.Annotate(fakehttpserver.NewHandler, fx.As(new(http.Handler))),
+			fakehttpserver.NewServer,
 		),
-		fx.Invoke(fakeserver.RegisterHooks),
+		fx.Invoke(fakehttpserver.RegisterHooks),
 	).Run()
 }

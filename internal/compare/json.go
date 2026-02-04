@@ -12,8 +12,8 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/config"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/config"
 )
 
 type jsonComparator struct {

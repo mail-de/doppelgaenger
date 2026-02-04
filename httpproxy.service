@@ -4,15 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=httpproxy
-Group=httpproxy
-EnvironmentFile=-/etc/default/httpproxy
+User=doppelgaenger
+Group=doppelgaenger
+EnvironmentFile=-/etc/default/doppelgaenger
 Environment=LISTEN=:8443
 Environment=PRIMARY=https://primary.example.com
 Environment=SHADOW=https://shadow.example.com
-Environment=TLS_CERT=/etc/httpproxy/cert.pem
-Environment=TLS_KEY=/etc/httpproxy/key.pem
-ExecStart=/usr/local/bin/httpproxy
+Environment=TLS_CERT=/etc/doppelgaenger/cert.pem
+Environment=TLS_KEY=/etc/doppelgaenger/key.pem
+ExecStart=/usr/local/bin/doppelgaenger
 Restart=on-failure
 
 # Security hardening

@@ -18,7 +18,7 @@ RUN go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
 RUN /go/bin/cyclonedx-gomod mod -output /app/sbom.cdx.json -json
 
 # Build the binary using vendor directory
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags "-X main.version=${VERSION}" -o httpproxy main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags "-X main.version=${VERSION}" -o doppelgaenger main.go
 
 # Final stage
 FROM scratch
@@ -28,7 +28,7 @@ ENV TZ=UTC
 WORKDIR /app
 
 # Copy the binary from the builder stage
-COPY --from=builder /app/httpproxy .
+COPY --from=builder /app/doppelgaenger .
 COPY --from=builder /app/sbom.cdx.json .
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo/UTC /usr/share/zoneinfo/UTC
@@ -37,4 +37,4 @@ COPY --from=builder /usr/share/zoneinfo/UTC /usr/share/zoneinfo/UTC
 EXPOSE 8443
 
 # Run the binary
-ENTRYPOINT ["./httpproxy"]
+ENTRYPOINT ["./doppelgaenger"]

@@ -16,10 +16,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 
-	"httpproxy/internal/config"
-	"httpproxy/internal/headers"
-	"httpproxy/internal/protocol"
-	"httpproxy/internal/ratelimit"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/headers"
+	"doppelgaenger/internal/protocol"
+	"doppelgaenger/internal/ratelimit"
 )
 
 // Handler handles incoming proxy requests.

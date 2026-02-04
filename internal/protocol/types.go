@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"httpproxy/internal/compare"
-	"httpproxy/internal/headers"
+	"doppelgaenger/internal/compare"
+	"doppelgaenger/internal/headers"
 )
 
 type Target string

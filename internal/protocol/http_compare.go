@@ -3,8 +3,8 @@ package protocol
 import (
 	"errors"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/compare"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/compare"
 )
 
 type HTTPComparator struct {

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"testing"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/config"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/config"
 )
 
 func TestNginxComparatorDetectsHeaderDiff(t *testing.T) {

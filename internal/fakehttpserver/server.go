@@ -1,4 +1,4 @@
-package fakeserver
+package fakehttpserver
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/app"
+	"doppelgaenger/internal/app"
 )
 
 // NewServer constructs the fake HTTP server.
@@ -26,7 +26,7 @@ func NewServer(cfg Config, handler http.Handler) *http.Server {
 func RegisterHooks(lc fx.Lifecycle, cfg Config, srv *http.Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
-			logger.Info("fakeserver starting", "version", string(version))
+			logger.Info("fakehttpserver starting", "version", string(version))
 			logger.Info("listening", "addr", cfg.ListenAddr, "mode", cfg.Mode)
 
 			go func() {

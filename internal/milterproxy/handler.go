@@ -11,9 +11,9 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/config"
-	"httpproxy/internal/protocol"
-	"httpproxy/internal/ratelimit"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/protocol"
+	"doppelgaenger/internal/ratelimit"
 )
 
 type Handler struct {

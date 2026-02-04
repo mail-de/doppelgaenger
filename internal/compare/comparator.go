@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"httpproxy/internal/backend"
-	"httpproxy/internal/config"
-	"httpproxy/internal/headers"
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/headers"
 )
 
 const (

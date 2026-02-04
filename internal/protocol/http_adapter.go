@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"httpproxy/internal/backend"
+	"doppelgaenger/internal/backend"
 )
 
 type HTTPAdapter struct {

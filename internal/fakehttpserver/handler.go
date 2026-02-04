@@ -1,4 +1,4 @@
-package fakeserver
+package fakehttpserver
 
 import (
 	"log/slog"
@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"httpproxy/internal/headers"
+	"doppelgaenger/internal/headers"
 )
 
 // Handler handles incoming fake server requests.

@@ -109,8 +109,8 @@ When `PROTOCOL=milter`, the proxy listens on `MILTER_LISTEN` and forwards incomi
 
 ### Build
 ```bash
-go build -o httpproxy main.go
-go build -o fakeserver cmd/fakeserver/main.go
+go build -o doppelgaenger main.go
+go build -o fakehttpserver cmd/fakehttpserver/main.go
 ```
 
 ### SBOM
@@ -123,14 +123,14 @@ Generates `sbom.cdx.json` in the project directory. During the Docker image buil
 ```bash
 export PRIMARY="https://api.production.internal"
 export SHADOW="https://api.staging.internal"
-./httpproxy
+./doppelgaenger
 ```
 
 ### Run Fake Server
 ```bash
 export FAKE_LISTEN=":9001"
 export FAKE_MODE=echo
-./fakeserver
+./fakehttpserver
 ```
 
 ## License

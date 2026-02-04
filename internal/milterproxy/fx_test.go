@@ -9,11 +9,11 @@ import (
 
 	"go.uber.org/fx"
 
-	"httpproxy/internal/app"
-	"httpproxy/internal/config"
-	"httpproxy/internal/milterproxy"
-	"httpproxy/internal/protocol"
-	"httpproxy/internal/ratelimit"
+	"doppelgaenger/internal/app"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/milterproxy"
+	"doppelgaenger/internal/protocol"
+	"doppelgaenger/internal/ratelimit"
 )
 
 type stubAdapter struct{}

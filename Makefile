@@ -1,5 +1,5 @@
-BINARY_NAME=httpproxy
-FAKE_BINARY_NAME=fakeserver
+BINARY_NAME=doppelgaenger
+FAKE_BINARY_NAME=fakehttpserver
 VERSION=$(shell git describe --tags --always --dirty)
 GO_FILES=$(shell find . -name "*.go" -not -path "./vendor/*")
 SBOM_FILE=sbom.cdx.json
@@ -18,7 +18,7 @@ build:
 
 build-fake:
 	mkdir -p build
-	go build $(GOFLAGS) $(LDFLAGS) -o build/$(FAKE_BINARY_NAME) cmd/fakeserver/main.go
+	go build $(GOFLAGS) $(LDFLAGS) -o build/$(FAKE_BINARY_NAME) cmd/fakehttpserver/main.go
 
 clean:
 	rm -f build/$(BINARY_NAME) build/$(FAKE_BINARY_NAME)

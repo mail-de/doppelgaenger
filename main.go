@@ -7,12 +7,12 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
-	"httpproxy/internal/app"
-	"httpproxy/internal/compare"
-	"httpproxy/internal/config"
-	"httpproxy/internal/milterproxy"
-	"httpproxy/internal/proxy"
-	"httpproxy/internal/server"
+	"doppelgaenger/internal/app"
+	"doppelgaenger/internal/compare"
+	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/milterproxy"
+	"doppelgaenger/internal/proxy"
+	"doppelgaenger/internal/server"
 )
 
 var version = "dev"

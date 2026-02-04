@@ -1,4 +1,4 @@
-package fakeserver
+package fakehttpserver
 
 import (
 	"errors"
