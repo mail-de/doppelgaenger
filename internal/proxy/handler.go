@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +17,7 @@ import (
 
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/headers"
+	"doppelgaenger/internal/mapping"
 	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/ratelimit"
 )
@@ -28,6 +28,7 @@ type Handler struct {
 	adapter       protocol.ProtocolAdapter
 	runner        protocol.Runner
 	shadowLimiter ratelimit.Limiter
+	pathMapper    mapping.PathMapper
 	logger        *slog.Logger
 
 	requestID atomic.Uint64
@@ -42,6 +43,7 @@ type HandlerDeps struct {
 	Adapter       protocol.ProtocolAdapter
 	Runner        protocol.Runner
 	ShadowLimiter ratelimit.Limiter
+	PathMapper    mapping.PathMapper
 	Logger        *slog.Logger
 }
 
@@ -52,6 +54,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		adapter:       deps.Adapter,
 		runner:        deps.Runner,
 		shadowLimiter: deps.ShadowLimiter,
+		pathMapper:    deps.PathMapper,
 		logger:        deps.Logger,
 		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
@@ -76,6 +79,18 @@ func (h *Handler) Handle(c *gin.Context) {
 	rawQuery := c.Request.URL.RawQuery
 	hdr := headers.Clone(c.Request.Header)
 	remoteAddr := clientIP(c.Request)
+
+	primaryPath, shadowPath, err := h.pathMapper.Map(path)
+	if err != nil {
+		h.logger.Error("path_mapping_failed",
+			"req_id", reqID,
+			"remote", remoteAddr,
+			"path", path,
+			"err", err.Error(),
+		)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
 
 	corrID, corrGenerated := h.ensureRequestID(hdr)
 
@@ -124,17 +139,11 @@ func (h *Handler) Handle(c *gin.Context) {
 
 	shadowStarted := false
 	shadowSession := protocol.TestSession(nil)
-	var shadowCancel context.CancelFunc
 	if doShadow {
-		shadowCtx := c.Request.Context()
-		shadowCtx, shadowCancel = context.WithTimeout(c.Request.Context(), h.cfg.ShadowTimeout)
-		shadowSession, err = h.adapter.NewSession(shadowCtx, protocol.TargetShadow)
+		shadowSession, err = h.adapter.NewSession(c.Request.Context(), protocol.TargetShadow)
 		if err == nil {
 			shadowStarted = true
 		}
-	}
-	if shadowCancel != nil {
-		defer shadowCancel()
 	}
 	if shadowSession != nil {
 		defer func() {
@@ -143,14 +152,16 @@ func (h *Handler) Handle(c *gin.Context) {
 	}
 
 	event := protocol.Event{
-		Kind:       "http",
-		Method:     method,
-		Path:       path,
-		RawQuery:   rawQuery,
-		Header:     hdr,
-		Body:       body,
-		RemoteAddr: remoteAddr,
-		RequestID:  reqID,
+		Kind:        "http",
+		Method:      method,
+		Path:        path,
+		PrimaryPath: primaryPath,
+		ShadowPath:  shadowPath,
+		RawQuery:    rawQuery,
+		Header:      hdr,
+		Body:        body,
+		RemoteAddr:  remoteAddr,
+		RequestID:   reqID,
 	}
 
 	result := h.runner.RunEvent(c.Request.Context(), primarySession, shadowSession, event)

@@ -5,11 +5,14 @@ import (
 	"errors"
 
 	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/headers"
 )
 
 type HTTPAdapter struct {
-	PrimaryPool backend.Pool
-	ShadowPool  backend.Pool
+	PrimaryPool           backend.Pool
+	ShadowPool            backend.Pool
+	PrimaryRequestHeaders map[string]string
+	ShadowRequestHeaders  map[string]string
 }
 
 func (a HTTPAdapter) Protocol() string {
@@ -19,24 +22,28 @@ func (a HTTPAdapter) Protocol() string {
 func (a HTTPAdapter) NewSession(ctx context.Context, target Target) (TestSession, error) {
 	var pool backend.Pool
 	var kind backend.BackendKind
+	var configuredRequestHeaders map[string]string
 	if target == TargetPrimary {
 		pool = a.PrimaryPool
 		kind = backend.BackendPrimary
+		configuredRequestHeaders = a.PrimaryRequestHeaders
 	} else if target == TargetShadow {
 		pool = a.ShadowPool
 		kind = backend.BackendShadow
+		configuredRequestHeaders = a.ShadowRequestHeaders
 	} else {
 		return nil, errors.New("unknown target")
 	}
 
-	return &httpSession{pool: pool, ctx: ctx, kind: kind}, nil
+	return &httpSession{pool: pool, ctx: ctx, kind: kind, configuredRequestHeaders: configuredRequestHeaders}, nil
 }
 
 type httpSession struct {
-	pool  backend.Pool
-	ctx   context.Context
-	kind  backend.BackendKind
-	resCh chan backend.BackendResult
+	pool                     backend.Pool
+	ctx                      context.Context
+	kind                     backend.BackendKind
+	resCh                    chan backend.BackendResult
+	configuredRequestHeaders map[string]string
 }
 
 func (s *httpSession) Send(event Event) error {
@@ -45,12 +52,23 @@ func (s *httpSession) Send(event Event) error {
 	}
 
 	s.resCh = make(chan backend.BackendResult, 1)
+	path := event.Path
+	if s.kind == backend.BackendPrimary && event.PrimaryPath != "" {
+		path = event.PrimaryPath
+	}
+	if s.kind == backend.BackendShadow && event.ShadowPath != "" {
+		path = event.ShadowPath
+	}
+	headersToSend := headers.Clone(event.Header)
+	for name, value := range s.configuredRequestHeaders {
+		headersToSend.Set(name, value)
+	}
 	item := backend.WorkItem{
 		Kind:       s.kind,
 		Method:     event.Method,
-		Path:       event.Path,
+		Path:       path,
 		RawQuery:   event.RawQuery,
-		Header:     event.Header,
+		Header:     headersToSend,
 		Body:       event.Body,
 		RemoteAddr: event.RemoteAddr,
 		RequestID:  event.RequestID,

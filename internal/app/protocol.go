@@ -21,7 +21,12 @@ type ProtocolAdapterDeps struct {
 func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.ProtocolAdapter, error) {
 	switch deps.Config.Protocol {
 	case "http":
-		return protocol.HTTPAdapter{PrimaryPool: deps.PrimaryPool, ShadowPool: deps.ShadowPool}, nil
+		return protocol.HTTPAdapter{
+			PrimaryPool:           deps.PrimaryPool,
+			ShadowPool:            deps.ShadowPool,
+			PrimaryRequestHeaders: deps.Config.PrimaryRequestHeaders,
+			ShadowRequestHeaders:  deps.Config.ShadowRequestHeaders,
+		}, nil
 	case "milter":
 		return protocol.MilterAdapter{
 			PrimaryAddr: deps.Config.PrimaryMilterAddr,

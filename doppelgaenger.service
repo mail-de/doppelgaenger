@@ -1,0 +1,16 @@
+[Unit]
+Description=Doppelgaenger HTTP Shadow Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CONFIG_FILE=/etc/doppelgaenger/config.yaml
+ExecStart=/usr/local/bin/doppelgaenger
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+LogsDirectory=doppelgaenger
+
+[Install]
+WantedBy=multi-user.target

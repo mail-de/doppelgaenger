@@ -1,0 +1,36 @@
+# listen_addr: the address the fake server listens on.
+listen_addr: ":9001"
+
+# tls_cert_file: path to the TLS certificate file.
+tls_cert_file: ""
+
+# tls_key_file: path to the TLS key file.
+tls_key_file: ""
+
+# mode: server operation mode ("echo" or "random").
+mode: "echo"
+
+# echo_headers: list of request headers to echo back in the response.
+echo_headers:
+  - "Auth-Status"
+  - "Auth-Server"
+  - "Auth-Port"
+  - "Auth-User"
+  - "Auth-Error"
+  - "X-Nauthilus-Session"
+
+# response_headers: static headers to include in every response.
+response_headers: {}
+
+# random_chance: probability (0-100) of randomizing a header value in "random" mode.
+random_chance: 10
+
+# random_headers: headers eligible for randomization (defaults to echo_headers).
+random_headers: []
+
+# random_values: pool of values used for randomization.
+random_values:
+  - "random"
+
+# log_json: whether to use JSON formatted logging.
+log_json: false

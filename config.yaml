@@ -1,0 +1,169 @@
+# Global Settings
+# ------------------------------------------------------------------------------
+# protocol: selects the proxy protocol. Supported values: "http" or "milter".
+protocol: http
+
+# listen_addr: the address the HTTP proxy listens on (e.g., ":8443").
+# Applies to: HTTP protocol.
+listen_addr: ":8443"
+
+# tls_cert_file: path to the TLS certificate file for the proxy server.
+# Applies to: All protocols (if applicable).
+tls_cert_file: ""
+
+# tls_key_file: path to the TLS key file for the proxy server.
+# Applies to: All protocols (if applicable).
+tls_key_file: ""
+
+# Milter Adapter Settings
+# ------------------------------------------------------------------------------
+# milter_listen_addr: the TCP address for the Milter proxy listener.
+# Applies to: Milter protocol.
+milter_listen_addr: ":9999"
+
+# primary_milter_addr: the address of the primary Milter backend.
+# Applies to: Milter protocol.
+primary_milter_addr: "127.0.0.1:9997"
+
+# shadow_milter_addr: the address of the shadow Milter backend.
+# Applies to: Milter protocol.
+shadow_milter_addr: "127.0.0.1:9998"
+
+# milter_timeout: the timeout for Milter upstream operations.
+# Applies to: Milter protocol.
+milter_timeout: "2s"
+
+# HTTP Adapter Settings
+# ------------------------------------------------------------------------------
+# primary_base_url: the base URL for the primary HTTP backend.
+# Applies to: HTTP protocol.
+primary_base_url: "https://127.0.0.1:9001"
+
+# shadow_base_url: the base URL for the shadow HTTP backend.
+# Applies to: HTTP protocol.
+shadow_base_url: "https://127.0.0.1:9002"
+
+# root_ca: path to a common CA certificate for all upstream backends.
+# Applies to: All protocols (HTTP upstreams or Milter if TLS is used).
+root_ca: ""
+
+# primary_root_ca: path to the CA certificate specifically for the primary backend.
+# Applies to: All protocols.
+primary_root_ca: ""
+
+# shadow_root_ca: path to the CA certificate specifically for the shadow backend.
+# Applies to: All protocols.
+shadow_root_ca: ""
+
+# insecure_upstream: allows insecure TLS connections (no verification) to backends.
+# Applies to: All protocols.
+insecure_upstream: false
+
+# Shadow & Rate Limiting Settings
+# ------------------------------------------------------------------------------
+# shadow_sample_percent: percentage of traffic mirrored to shadow (0-100).
+# Applies to: All protocols.
+shadow_sample_percent: 5
+
+# shadow_force_header: header name that (if present) forces shadowing.
+# Applies to: HTTP protocol.
+shadow_force_header: "X-Shadow"
+
+# primary_request_headers: optional static headers added to requests sent to primary.
+# Applies to: HTTP protocol.
+primary_request_headers: {}
+
+# shadow_request_headers: optional static headers added to requests sent to shadow.
+# Applies to: HTTP protocol.
+shadow_request_headers: {}
+
+# shadow_rps: maximum requests per second for the shadow backend (0 disables).
+# Applies to: All protocols.
+shadow_rps: 200
+
+# shadow_burst: maximum number of tokens in the token bucket (burst capacity).
+# Applies to: All protocols.
+shadow_burst: 400
+
+# shadow_timeout: time limit for requests to the shadow backend.
+# Applies to: HTTP protocol (for Milter, milter_timeout is used).
+shadow_timeout: "150ms"
+
+# Backend Worker Settings
+# ------------------------------------------------------------------------------
+# primary_workers: number of parallel workers for the primary backend.
+# Applies to: HTTP protocol.
+primary_workers: 32
+
+# shadow_workers: number of parallel workers for the shadow backend.
+# Applies to: HTTP protocol.
+shadow_workers: 16
+
+# primary_queue: maximum queue size for primary requests.
+# Applies to: HTTP protocol.
+primary_queue: 4096
+
+# shadow_queue: maximum queue size for shadow requests.
+# Applies to: HTTP protocol.
+shadow_queue: 4096
+
+# max_backend_body_bytes: limits the size of the request body sent to backends.
+# Applies to: HTTP protocol.
+max_backend_body_bytes: 32768
+
+# Header & Comparison Settings
+# ------------------------------------------------------------------------------
+# forward_response_headers: headers passed from the primary backend to the client.
+# Applies to: HTTP protocol.
+forward_response_headers:
+  - "Auth-Status"
+  - "Auth-Server"
+  - "Auth-Port"
+  - "Auth-User"
+  - "Auth-Pass"
+  - "Auth-Error"
+  - "Auth-Wait"
+  - "Auth-Protocol"
+  - "X-Nauthilus-Session"
+
+# compare_headers: list of headers compared between primary and shadow.
+# Applies to: All protocols (if applicable).
+compare_headers:
+  - "Auth-Status"
+  - "Auth-Server"
+  - "Auth-Port"
+  - "Auth-User"
+  - "Auth-Error"
+  - "X-Nauthilus-Session"
+
+# compare_mode: selects the comparison mode (nginx, header, json, html).
+# Applies to: HTTP protocol.
+compare_mode: "nginx"
+
+# compare_json_strict: controls strict JSON comparison behavior.
+# Applies to: HTTP protocol.
+compare_json_strict: false
+
+# compare_html_threshold: required similarity for HTML comparison (0.0-1.0).
+# Applies to: HTTP protocol.
+compare_html_threshold: 0.99
+
+# Logging Settings
+# ------------------------------------------------------------------------------
+# log_session_only_on_diff: log session headers only when differences exist.
+# Applies to: All protocols.
+log_session_only_on_diff: true
+
+# log_json: whether the logger should output JSON.
+# Applies to: All protocols.
+log_json: true
+
+# Path Mapping Settings
+# ------------------------------------------------------------------------------
+# path_mapping: controls how incoming request paths are mapped to backends.
+# Applies to: HTTP protocol.
+path_mapping:
+  # mode: "direct" (1:1 mapping) or "rewrite" (regex-based).
+  mode: direct
+  # rules: list of rewrite rules (only used if mode is "rewrite").
+  rules: []

@@ -4,21 +4,38 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
+
+	"github.com/spf13/viper"
 )
 
 // Config holds configuration settings for the fake server.
 type Config struct {
-	ListenAddr      string
-	TLSCertFile     string
-	TLSKeyFile      string
-	Mode            string
-	EchoHeaders     []string
-	ResponseHeaders map[string]string
-	RandomChance    int
-	RandomHeaders   []string
-	RandomValues    []string
+	// ListenAddr is the address the fake server listens on.
+	ListenAddr string `mapstructure:"listen_addr"`
+	// TLSCertFile path to the TLS certificate file.
+	TLSCertFile string `mapstructure:"tls_cert_file"`
+	// TLSKeyFile path to the TLS key file.
+	TLSKeyFile string `mapstructure:"tls_key_file"`
+	// Mode server operation mode ("echo" or "random").
+	Mode string `mapstructure:"mode"`
+	// EchoHeaders list of request headers to echo back in the response.
+	EchoHeaders []string `mapstructure:"echo_headers"`
+	// ResponseHeaders static headers to include in every response.
+	ResponseHeaders map[string]string `mapstructure:"response_headers"`
+	// RandomChance probability (0-100) of randomizing a header value in "random" mode.
+	RandomChance int `mapstructure:"random_chance"`
+	// RandomHeaders headers eligible for randomization (defaults to echo_headers).
+	RandomHeaders []string `mapstructure:"random_headers"`
+	// RandomValues pool of values used for randomization.
+	RandomValues []string `mapstructure:"random_values"`
+	// LogJSON whether the logger should output JSON.
+	LogJSON bool `mapstructure:"log_json"`
+}
+
+// UseJSONLogger reports whether the JSON logger is enabled.
+func (c Config) UseJSONLogger() bool {
+	return c.LogJSON
 }
 
 var defaultEchoHeaders = []string{
@@ -30,116 +47,76 @@ var defaultEchoHeaders = []string{
 	"X-Nauthilus-Session",
 }
 
-// Load loads the configuration from environment variables and sets defaults.
+// Load loads the configuration from a YAML file using Viper.
 func Load() (Config, error) {
-	mode := strings.ToLower(getenv("FAKE_MODE", "echo"))
-	if mode != "echo" && mode != "random" {
-		return Config{}, fmt.Errorf("invalid FAKE_MODE: %s", mode)
+	v := viper.New()
+	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
+	if configFile != "" {
+		v.SetConfigFile(configFile)
+	} else {
+		v.SetConfigName("fakehttpserver")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("/etc/doppelgaenger")
 	}
 
-	echoHeaders := parseList(getenv("FAKE_ECHO_HEADERS", ""))
-	if len(echoHeaders) == 0 {
-		echoHeaders = append([]string(nil), defaultEchoHeaders...)
+	setDefaults(v)
+	if err := v.ReadInConfig(); err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	randomHeaders := parseList(getenv("FAKE_RANDOM_HEADERS", ""))
-	if len(randomHeaders) == 0 {
-		randomHeaders = append([]string(nil), echoHeaders...)
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
-
-	randomValues := parseList(getenv("FAKE_RANDOM_VALUES", "random"))
-	if len(randomValues) == 0 {
-		randomValues = []string{"random"}
-	}
-
-	responseHeaders, err := parseHeaderMap(getenv("FAKE_RESPONSE_HEADERS", ""))
-	if err != nil {
+	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
-
-	chance := getenvInt("FAKE_RANDOM_CHANCE", 10)
-	if chance < 0 {
-		chance = 0
-	}
-	if chance > 100 {
-		chance = 100
-	}
-
-	return Config{
-		ListenAddr:      getenv("FAKE_LISTEN", ":9001"),
-		TLSCertFile:     getenv("FAKE_TLS_CERT", ""),
-		TLSKeyFile:      getenv("FAKE_TLS_KEY", ""),
-		Mode:            mode,
-		EchoHeaders:     echoHeaders,
-		ResponseHeaders: responseHeaders,
-		RandomChance:    chance,
-		RandomHeaders:   randomHeaders,
-		RandomValues:    randomValues,
-	}, nil
+	return cfg, nil
 }
 
-func parseHeaderMap(raw string) (map[string]string, error) {
-	items := parseList(raw)
-	if len(items) == 0 {
-		return map[string]string{}, nil
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("listen_addr", ":9001")
+	v.SetDefault("tls_cert_file", "")
+	v.SetDefault("tls_key_file", "")
+	v.SetDefault("mode", "echo")
+	v.SetDefault("echo_headers", defaultEchoHeaders)
+	v.SetDefault("response_headers", map[string]string{})
+	v.SetDefault("random_chance", 10)
+	v.SetDefault("random_headers", []string{})
+	v.SetDefault("random_values", []string{"random"})
+	v.SetDefault("log_json", true)
+}
+
+func validate(cfg *Config) error {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode != "echo" && mode != "random" {
+		return fmt.Errorf("invalid mode: %s", cfg.Mode)
+	}
+	cfg.Mode = mode
+
+	if len(cfg.EchoHeaders) == 0 {
+		cfg.EchoHeaders = append([]string(nil), defaultEchoHeaders...)
+	}
+	if len(cfg.RandomHeaders) == 0 {
+		cfg.RandomHeaders = append([]string(nil), cfg.EchoHeaders...)
+	}
+	if len(cfg.RandomValues) == 0 {
+		cfg.RandomValues = []string{"random"}
 	}
 
-	result := make(map[string]string, len(items))
-	for _, item := range items {
-		parts := strings.SplitN(item, "=", 2)
-		if len(parts) != 2 {
-			return nil, errors.New("FAKE_RESPONSE_HEADERS must be in key=value form")
+	if cfg.RandomChance < 0 {
+		cfg.RandomChance = 0
+	}
+	if cfg.RandomChance > 100 {
+		cfg.RandomChance = 100
+	}
+
+	for key := range cfg.ResponseHeaders {
+		if strings.TrimSpace(key) == "" {
+			return errors.New("response_headers contains an empty header name")
 		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		if key == "" {
-			return nil, errors.New("FAKE_RESPONSE_HEADERS contains an empty header name")
-		}
-		result[key] = value
 	}
 
-	return result, nil
-}
-
-func parseList(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-
-	parts := strings.Split(raw, ",")
-	list := make([]string, 0, len(parts))
-	for _, part := range parts {
-		item := strings.TrimSpace(part)
-		if item == "" {
-			continue
-		}
-		list = append(list, item)
-	}
-
-	return list
-}
-
-// getenv reads an environment variable or returns a default value.
-func getenv(key, def string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-
-	return v
-}
-
-// getenvInt reads an environment variable or returns a default value.
-func getenvInt(key string, def int) int {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return def
-	}
-
-	parsed, err := strconv.Atoi(raw)
-	if err != nil {
-		return def
-	}
-
-	return parsed
+	return nil
 }

@@ -5,8 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
 
 	"go.uber.org/fx"
 
@@ -20,8 +18,8 @@ import (
 type Version string
 
 // NewLogger builds the structured logger and sets it as default.
-func NewLogger() *slog.Logger {
-	logger := slog.New(newHandler(os.Stdout, getenvBool("LOG_JSON", true)))
+func NewLogger(cfg config.Config) *slog.Logger {
+	logger := slog.New(newHandler(os.Stdout, cfg.UseJSONLogger()))
 	slog.SetDefault(logger)
 
 	return logger
@@ -34,20 +32,6 @@ func newHandler(writer io.Writer, useJSON bool) slog.Handler {
 	}
 
 	return slog.NewTextHandler(writer, options)
-}
-
-func getenvBool(key string, def bool) bool {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return def
-	}
-
-	parsed, err := strconv.ParseBool(raw)
-	if err != nil {
-		return def
-	}
-
-	return parsed
 }
 
 // UpstreamTLSOut provides TLS configs for primary and shadow backends.

@@ -9,17 +9,8 @@ services:
       - apparmor:docker-default
     ports:
       - "8443:8443"
-    environment:
-      - LISTEN=:8443
-      - PRIMARY=http://fakehttpserver-primary:9001
-      - SHADOW=http://fakehttpserver-shadow:9002
-      - TLS_CERT=/certs/cert.pem
-      - TLS_KEY=/certs/key.pem
-      - LOG_JSON=false
-      # - PRIMARY_WORKERS=32
-      # - SHADOW_WORKERS=16
-      # - SHADOW_SAMPLE_PERCENT=5
     volumes:
+      - ./config.docker.yaml:/app/config.yaml:ro
       - ./certs:/certs:ro
     restart: unless-stopped
 
@@ -35,10 +26,8 @@ services:
       - apparmor:docker-default
     ports:
       - "9001:9001"
-    environment:
-      - FAKE_LISTEN=:9001
-      - FAKE_MODE=echo
-      - LOG_JSON=false
+    volumes:
+      - ./fakehttpserver-primary.yaml:/app/fakehttpserver.yaml:ro
     restart: unless-stopped
 
   fakehttpserver-shadow:
@@ -53,9 +42,6 @@ services:
       - apparmor:docker-default
     ports:
       - "9002:9002"
-    environment:
-      - FAKE_LISTEN=:9002
-      - FAKE_MODE=random
-      - FAKE_RANDOM_CHANCE=20
-      - LOG_JSON=false
+    volumes:
+      - ./fakehttpserver-shadow.yaml:/app/fakehttpserver.yaml:ro
     restart: unless-stopped

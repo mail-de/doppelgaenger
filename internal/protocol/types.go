@@ -39,16 +39,18 @@ type ActionDiff struct {
 }
 
 type Event struct {
-	Kind       string
-	Method     string
-	Path       string
-	RawQuery   string
-	Header     http.Header
-	Body       []byte
-	RemoteAddr string
-	RequestID  uint64
-	Payload    []byte
-	Meta       map[string]string
+	Kind        string
+	Method      string
+	Path        string
+	PrimaryPath string
+	ShadowPath  string
+	RawQuery    string
+	Header      http.Header
+	Body        []byte
+	RemoteAddr  string
+	RequestID   uint64
+	Payload     []byte
+	Meta        map[string]string
 }
 
 type Response struct {

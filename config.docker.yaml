@@ -1,0 +1,110 @@
+# Global Settings
+# ------------------------------------------------------------------------------
+# protocol: selects the proxy protocol. Supported values: "http" or "milter".
+protocol: http
+
+# listen_addr: the address the HTTP proxy listens on (e.g., ":8443").
+listen_addr: ":8443"
+
+# tls_cert_file: path to the TLS certificate file for the proxy server.
+tls_cert_file: "/certs/cert.pem"
+
+# tls_key_file: path to the TLS key file for the proxy server.
+tls_key_file: "/certs/key.pem"
+
+# HTTP Adapter Settings
+# ------------------------------------------------------------------------------
+# primary_base_url: the base URL for the primary HTTP backend.
+primary_base_url: "http://fakehttpserver-primary:9001"
+
+# shadow_base_url: the base URL for the shadow HTTP backend.
+shadow_base_url: "http://fakehttpserver-shadow:9002"
+
+# Shadow & Rate Limiting Settings
+# ------------------------------------------------------------------------------
+# shadow_sample_percent: percentage of traffic mirrored to shadow (0-100).
+shadow_sample_percent: 5
+
+# shadow_force_header: header name that (if present) forces shadowing.
+shadow_force_header: "X-Shadow"
+
+# primary_request_headers: optional static headers added to requests sent to primary.
+primary_request_headers: {}
+
+# shadow_request_headers: optional static headers added to requests sent to shadow.
+shadow_request_headers: {}
+
+# shadow_rps: maximum requests per second for the shadow backend (0 disables).
+shadow_rps: 200
+
+# shadow_burst: maximum number of tokens in the token bucket (burst capacity).
+shadow_burst: 400
+
+# shadow_timeout: time limit for requests to the shadow backend.
+shadow_timeout: "150ms"
+
+# Backend Worker Settings
+# ------------------------------------------------------------------------------
+# primary_workers: number of parallel workers for the primary backend.
+primary_workers: 32
+
+# shadow_workers: number of parallel workers for the shadow backend.
+shadow_workers: 16
+
+# primary_queue: maximum queue size for primary requests.
+primary_queue: 4096
+
+# shadow_queue: maximum queue size for shadow requests.
+shadow_queue: 4096
+
+# Header & Comparison Settings
+# ------------------------------------------------------------------------------
+# forward_response_headers: headers passed from the primary backend to the client.
+forward_response_headers:
+  - "Auth-Status"
+  - "Auth-Server"
+  - "Auth-Port"
+  - "Auth-User"
+  - "Auth-Pass"
+  - "Auth-Error"
+  - "Auth-Wait"
+  - "Auth-Protocol"
+  - "X-Nauthilus-Session"
+
+# compare_headers: list of headers compared between primary and shadow.
+compare_headers:
+  - "Auth-Status"
+  - "Auth-Server"
+  - "Auth-Port"
+  - "Auth-User"
+  - "Auth-Error"
+  - "X-Nauthilus-Session"
+
+# compare_mode: selects the comparison mode (nginx, header, json, html).
+compare_mode: "nginx"
+
+# compare_json_strict: controls strict JSON comparison behavior.
+compare_json_strict: false
+
+# compare_html_threshold: required similarity for HTML comparison (0.0-1.0).
+compare_html_threshold: 0.99
+
+# Logging Settings
+# ------------------------------------------------------------------------------
+# log_session_only_on_diff: log session headers only when differences exist.
+log_session_only_on_diff: true
+
+# log_json: whether the logger should output JSON.
+log_json: false
+
+# max_backend_body_bytes: limits the size of the request body sent to backends.
+max_backend_body_bytes: 32768
+
+# Path Mapping Settings
+# ------------------------------------------------------------------------------
+# path_mapping: controls how incoming request paths are mapped to backends.
+path_mapping:
+  # mode: "direct" (1:1 mapping) or "rewrite" (regex-based).
+  mode: direct
+  # rules: list of rewrite rules (only used if mode is "rewrite").
+  rules: []

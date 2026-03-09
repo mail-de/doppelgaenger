@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log/slog"
 	"net/http"
 
 	"go.uber.org/fx"
@@ -15,8 +14,8 @@ var version = "dev"
 
 func main() {
 	fx.New(
-		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
-			return &fxevent.SlogLogger{Logger: logger}
+		fx.WithLogger(func() fxevent.Logger {
+			return fxevent.NopLogger
 		}),
 		fx.Supply(app.Version(version)),
 		fx.Provide(

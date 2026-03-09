@@ -5,198 +5,278 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
+	"reflect"
 	"strings"
 	"time"
+
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
+
+	"doppelgaenger/internal/mapping"
 )
 
 // Config holds all configuration settings for the proxy.
 type Config struct {
 	// Protocol selects the proxy protocol (http or milter).
-	Protocol string
+	Protocol string `mapstructure:"protocol"`
 	// PrimaryBaseURL is the base URL for the primary backend that provides client responses.
-	PrimaryBaseURL *url.URL
+	// Applies to: HTTP protocol.
+	PrimaryBaseURL *url.URL `mapstructure:"primary_base_url"`
 
 	// ShadowBaseURL is the base URL for the shadow backend where traffic is mirrored.
-	ShadowBaseURL *url.URL
+	// Applies to: HTTP protocol.
+	ShadowBaseURL *url.URL `mapstructure:"shadow_base_url"`
 
 	// ShadowRPS defines the maximum requests per second for the shadow backend (0 disables the limit).
-	ShadowRPS float64
+	ShadowRPS float64 `mapstructure:"shadow_rps"`
 
 	// MaxBackendBodyBytes limits the size of the request body sent to backends.
-	MaxBackendBodyBytes int64
+	// Applies to: HTTP protocol.
+	MaxBackendBodyBytes int64 `mapstructure:"max_backend_body_bytes"`
 
 	// ListenAddr is the address the proxy listens on (e.g., ":8443").
-	ListenAddr string
+	// Applies to: HTTP protocol.
+	ListenAddr string `mapstructure:"listen_addr"`
 
 	// MilterListenAddr is the TCP address for the Milter proxy listener.
-	MilterListenAddr string
+	// Applies to: Milter protocol.
+	MilterListenAddr string `mapstructure:"milter_listen_addr"`
 
 	// PrimaryMilterAddr is the address of the primary Milter backend.
-	PrimaryMilterAddr string
+	// Applies to: Milter protocol.
+	PrimaryMilterAddr string `mapstructure:"primary_milter_addr"`
 
 	// ShadowMilterAddr is the address of the shadow Milter backend.
-	ShadowMilterAddr string
+	// Applies to: Milter protocol.
+	ShadowMilterAddr string `mapstructure:"shadow_milter_addr"`
 
 	// MilterTimeout is the timeout for Milter upstream operations.
-	MilterTimeout time.Duration
+	// Applies to: Milter protocol.
+	MilterTimeout time.Duration `mapstructure:"milter_timeout"`
 
 	// TLSCertFile path to the TLS certificate file for the proxy server.
-	TLSCertFile string
+	TLSCertFile string `mapstructure:"tls_cert_file"`
 
 	// TLSKeyFile path to the TLS key file for the proxy server.
-	TLSKeyFile string
+	TLSKeyFile string `mapstructure:"tls_key_file"`
 
 	// ShadowForceHeader is the header name that (if present) forces shadowing.
-	ShadowForceHeader string
+	// Applies to: HTTP protocol.
+	ShadowForceHeader string `mapstructure:"shadow_force_header"`
+
+	// PrimaryRequestHeaders are additional request headers added to primary backend calls.
+	// Applies to: HTTP protocol.
+	PrimaryRequestHeaders map[string]string `mapstructure:"primary_request_headers"`
+
+	// ShadowRequestHeaders are additional request headers added to shadow backend calls.
+	// Applies to: HTTP protocol.
+	ShadowRequestHeaders map[string]string `mapstructure:"shadow_request_headers"`
 
 	// RootCAPath is the path to a common CA certificate for all upstream backends.
-	RootCAPath string
+	RootCAPath string `mapstructure:"root_ca"`
 
 	// PrimaryRootCA path to the CA certificate specifically for the primary backend.
-	PrimaryRootCA string
+	PrimaryRootCA string `mapstructure:"primary_root_ca"`
 
 	// ShadowRootCA path to the CA certificate specifically for the shadow backend.
-	ShadowRootCA string
+	ShadowRootCA string `mapstructure:"shadow_root_ca"`
 
 	// PrimaryWorkers number of parallel workers for the primary backend.
-	PrimaryWorkers int
+	// Applies to: HTTP protocol.
+	PrimaryWorkers int `mapstructure:"primary_workers"`
 
 	// ShadowWorkers number of parallel workers for the shadow backend.
-	ShadowWorkers int
+	// Applies to: HTTP protocol.
+	ShadowWorkers int `mapstructure:"shadow_workers"`
 
 	// PrimaryQueueLen maximum queue size for primary requests.
-	PrimaryQueueLen int
+	// Applies to: HTTP protocol.
+	PrimaryQueueLen int `mapstructure:"primary_queue"`
 
 	// ShadowQueueLen maximum queue size for shadow requests.
-	ShadowQueueLen int
+	// Applies to: HTTP protocol.
+	ShadowQueueLen int `mapstructure:"shadow_queue"`
 
 	// ShadowSamplePercent percentage of traffic mirrored to the shadow backend (0-100).
-	ShadowSamplePercent int
+	ShadowSamplePercent int `mapstructure:"shadow_sample_percent"`
 
 	// ShadowBurst maximum number of tokens in the token bucket (burst capacity).
-	ShadowBurst int
+	ShadowBurst int `mapstructure:"shadow_burst"`
 
 	// ShadowTimeout time limit for requests to the shadow backend.
-	ShadowTimeout time.Duration
+	// Applies to: HTTP protocol.
+	ShadowTimeout time.Duration `mapstructure:"shadow_timeout"`
 
 	// ForwardResponseHeaders list of headers passed from the primary backend to the client.
-	ForwardResponseHeaders []string
+	// Applies to: HTTP protocol.
+	ForwardResponseHeaders []string `mapstructure:"forward_response_headers"`
 
 	// CompareHeaders list of headers compared between primary and shadow backends.
-	CompareHeaders []string
+	CompareHeaders []string `mapstructure:"compare_headers"`
 
 	// CompareMode selects the comparison mode (nginx, header, json, html).
-	CompareMode string
+	// Applies to: HTTP protocol.
+	CompareMode string `mapstructure:"compare_mode"`
 
 	// JSONStrict controls strict JSON comparison behavior.
-	JSONStrict bool
+	// Applies to: HTTP protocol.
+	JSONStrict bool `mapstructure:"compare_json_strict"`
 
 	// HTMLSimilarityThreshold defines the required similarity for HTML comparison (0.0-1.0).
-	HTMLSimilarityThreshold float64
+	// Applies to: HTTP protocol.
+	HTMLSimilarityThreshold float64 `mapstructure:"compare_html_threshold"`
 
 	// LogSessionOnlyOnDiff controls whether session headers are logged only when there are differences.
-	LogSessionOnlyOnDiff bool
+	LogSessionOnlyOnDiff bool `mapstructure:"log_session_only_on_diff"`
+
+	// LogJSON controls whether the logger should output JSON.
+	LogJSON bool `mapstructure:"log_json"`
 
 	// InsecureUpstream allows insecure TLS connections (no verification) to the backends.
-	InsecureUpstream bool
+	InsecureUpstream bool `mapstructure:"insecure_upstream"`
+
+	// RunAsUser switches the process user after startup initialization.
+	RunAsUser string `mapstructure:"run_as_user"`
+
+	// RunAsGroup switches the process primary group after startup initialization.
+	RunAsGroup string `mapstructure:"run_as_group"`
+
+	// ChrootDir changes the process root directory before dropping privileges.
+	ChrootDir string `mapstructure:"chroot"`
+
+	// PathMapping controls how incoming request paths are mapped to backends.
+	// Applies to: HTTP protocol.
+	PathMapping mapping.Config `mapstructure:"path_mapping"`
 }
 
-// Load loads the configuration from environment variables and sets default values.
+// UseJSONLogger reports whether the JSON logger is enabled.
+func (c Config) UseJSONLogger() bool {
+	return c.LogJSON
+}
+
+// Load loads the configuration from a YAML file using Viper.
 func Load() (Config, error) {
-	primaryURL, err := parseURL(getenv("PRIMARY", "https://127.0.0.1:9001"))
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid PRIMARY URL: %w", err)
+	v := viper.New()
+	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
+	if configFile != "" {
+		v.SetConfigFile(configFile)
+	} else {
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("/etc/doppelgaenger")
 	}
 
-	shadowURL, err := parseURL(getenv("SHADOW", "https://127.0.0.1:9002"))
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid SHADOW URL: %w", err)
+	setDefaults(v)
+	if err := v.ReadInConfig(); err != nil {
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
-	protocol := strings.ToLower(strings.TrimSpace(getenv("PROTOCOL", "http")))
+	var cfg Config
+	decodeHook := mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		decodeURLHook(),
+	)
+	if err := v.Unmarshal(&cfg, viper.DecodeHook(decodeHook)); err != nil {
+		return Config{}, fmt.Errorf("decode config: %w", err)
+	}
+
+	if err := validate(&cfg); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("protocol", "http")
+	v.SetDefault("listen_addr", ":8443")
+	v.SetDefault("tls_cert_file", "")
+	v.SetDefault("tls_key_file", "")
+	v.SetDefault("milter_listen_addr", ":9999")
+	v.SetDefault("primary_milter_addr", "127.0.0.1:9997")
+	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
+	v.SetDefault("milter_timeout", 2*time.Second)
+	v.SetDefault("primary_base_url", "https://127.0.0.1:9001")
+	v.SetDefault("shadow_base_url", "https://127.0.0.1:9002")
+	v.SetDefault("primary_workers", 32)
+	v.SetDefault("shadow_workers", 16)
+	v.SetDefault("primary_queue", 4096)
+	v.SetDefault("shadow_queue", 4096)
+	v.SetDefault("shadow_timeout", 150*time.Millisecond)
+	v.SetDefault("shadow_sample_percent", 5)
+	v.SetDefault("shadow_force_header", "X-Shadow")
+	v.SetDefault("primary_request_headers", map[string]string{})
+	v.SetDefault("shadow_request_headers", map[string]string{})
+	v.SetDefault("shadow_rps", 200.0)
+	v.SetDefault("shadow_burst", 400)
+	v.SetDefault("compare_mode", "nginx")
+	v.SetDefault("compare_json_strict", false)
+	v.SetDefault("compare_html_threshold", 0.99)
+	v.SetDefault("log_session_only_on_diff", true)
+	v.SetDefault("log_json", true)
+	v.SetDefault("max_backend_body_bytes", 32*1024)
+	v.SetDefault("root_ca", "")
+	v.SetDefault("primary_root_ca", "")
+	v.SetDefault("shadow_root_ca", "")
+	v.SetDefault("insecure_upstream", false)
+	v.SetDefault("run_as_user", "")
+	v.SetDefault("run_as_group", "")
+	v.SetDefault("chroot", "")
+	v.SetDefault("forward_response_headers", []string{
+		"Auth-Status",
+		"Auth-Server",
+		"Auth-Port",
+		"Auth-User",
+		"Auth-Pass",
+		"Auth-Error",
+		"Auth-Wait",
+		"Auth-Protocol",
+		"X-Nauthilus-Session",
+	})
+	v.SetDefault("compare_headers", []string{
+		"Auth-Status",
+		"Auth-Server",
+		"Auth-Port",
+		"Auth-User",
+		"Auth-Error",
+		"X-Nauthilus-Session",
+	})
+	v.SetDefault("path_mapping", mapping.Config{
+		Mode:  "direct",
+		Rules: []mapping.Rule{},
+	})
+}
+
+func validate(cfg *Config) error {
+	protocol := strings.ToLower(strings.TrimSpace(cfg.Protocol))
 	if protocol == "" {
 		protocol = "http"
 	}
 	if protocol != "http" && protocol != "milter" {
-		return Config{}, fmt.Errorf("invalid PROTOCOL: %s", protocol)
+		return fmt.Errorf("invalid protocol: %s", cfg.Protocol)
 	}
-
-	cfg := Config{
-		Protocol: protocol,
-
-		ListenAddr:       getenv("LISTEN", ":8443"),
-		MilterListenAddr: getenv("MILTER_LISTEN", ":9999"),
-
-		TLSCertFile: getenv("TLS_CERT", ""),
-		TLSKeyFile:  getenv("TLS_KEY", ""),
-
-		PrimaryBaseURL:    primaryURL,
-		ShadowBaseURL:     shadowURL,
-		PrimaryMilterAddr: getenv("MILTER_PRIMARY", "127.0.0.1:9997"),
-		ShadowMilterAddr:  getenv("MILTER_SHADOW", "127.0.0.1:9998"),
-		MilterTimeout:     getenvDuration("MILTER_TIMEOUT", 2*time.Second),
-
-		PrimaryWorkers:  getenvInt("PRIMARY_WORKERS", 32),
-		ShadowWorkers:   getenvInt("SHADOW_WORKERS", 16),
-		PrimaryQueueLen: getenvInt("PRIMARY_QUEUE", 4096),
-		ShadowQueueLen:  getenvInt("SHADOW_QUEUE", 4096),
-
-		ShadowTimeout: getenvDuration("SHADOW_TIMEOUT", 150*time.Millisecond),
-
-		ShadowSamplePercent: getenvInt("SHADOW_SAMPLE_PERCENT", 5),
-		ShadowForceHeader:   getenv("SHADOW_FORCE_HEADER", "X-Shadow"),
-
-		ShadowRPS:   getenvFloat("SHADOW_RPS", 200),
-		ShadowBurst: getenvInt("SHADOW_BURST", 400),
-
-		ForwardResponseHeaders: []string{
-			"Auth-Status",
-			"Auth-Server",
-			"Auth-Port",
-			"Auth-User",
-			"Auth-Pass",
-			"Auth-Error",
-			"Auth-Wait",
-			"Auth-Protocol",
-			"X-Nauthilus-Session",
-		},
-		CompareHeaders: []string{
-			"Auth-Status",
-			"Auth-Server",
-			"Auth-Port",
-			"Auth-User",
-			"Auth-Error",
-			"X-Nauthilus-Session",
-		},
-
-		CompareMode:             getenv("COMPARE_MODE", "nginx"),
-		JSONStrict:              getenvBool("COMPARE_JSON_STRICT", false),
-		HTMLSimilarityThreshold: getenvFloat("COMPARE_HTML_THRESHOLD", 0.99),
-
-		LogSessionOnlyOnDiff: getenvBool("LOG_SESSION_ONLY_ON_DIFF", true),
-		MaxBackendBodyBytes:  32 * 1024,
-
-		RootCAPath:       getenv("ROOT_CA", ""),
-		PrimaryRootCA:    getenv("PRIMARY_ROOT_CA", ""),
-		ShadowRootCA:     getenv("SHADOW_ROOT_CA", ""),
-		InsecureUpstream: getenvBool("INSECURE_UPSTREAM", false),
-	}
+	cfg.Protocol = protocol
 
 	if cfg.ShadowSamplePercent < 0 {
 		cfg.ShadowSamplePercent = 0
 	}
-
 	if cfg.ShadowSamplePercent > 100 {
 		cfg.ShadowSamplePercent = 100
 	}
-
 	if cfg.ShadowBurst < 1 && cfg.ShadowRPS > 0 {
 		cfg.ShadowBurst = 1
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))
-	if mode == "" || mode == "header" || mode == "nxinx" {
+	switch mode {
+	case "", "nginx", "header", "json", "html":
+		if mode == "" {
+			mode = "nginx"
+		}
+	case "nxinx":
+		mode = "nginx"
+	default:
 		mode = "nginx"
 	}
 	cfg.CompareMode = mode
@@ -208,12 +288,16 @@ func Load() (Config, error) {
 		cfg.HTMLSimilarityThreshold = 1
 	}
 
-	return cfg, nil
+	cfg.RunAsUser = strings.TrimSpace(cfg.RunAsUser)
+	cfg.RunAsGroup = strings.TrimSpace(cfg.RunAsGroup)
+	cfg.ChrootDir = strings.TrimSpace(cfg.ChrootDir)
+
+	return nil
 }
 
 // parseURL parses a string as a URL and ensures that scheme and host are present.
 func parseURL(s string) (*url.URL, error) {
-	u, err := url.Parse(s)
+	u, err := url.Parse(strings.TrimSpace(s))
 	if err != nil {
 		return nil, err
 	}
@@ -225,74 +309,14 @@ func parseURL(s string) (*url.URL, error) {
 	return u, nil
 }
 
-// getenv reads an environment variable or returns a default value.
-func getenv(key, def string) string {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
+func decodeURLHook() mapstructure.DecodeHookFuncType {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if from.Kind() != reflect.String {
+			return data, nil
+		}
+		if to != reflect.TypeOf(&url.URL{}) {
+			return data, nil
+		}
+		return parseURL(data.(string))
 	}
-
-	return v
-}
-
-// getenvInt reads an environment variable as an integer or returns a default value.
-func getenvInt(key string, def int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-
-	return n
-}
-
-// getenvFloat reads an environment variable as a float64 or returns a default value.
-func getenvFloat(key string, def float64) float64 {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return def
-	}
-
-	return f
-}
-
-// getenvBool reads an environment variable as a boolean (supports various formats like true, 1, yes).
-func getenvBool(key string, def bool) bool {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "y", "on":
-		return true
-	case "0", "false", "no", "n", "off":
-		return false
-	default:
-		return def
-	}
-}
-
-// getenvDuration reads an environment variable as a time duration.
-func getenvDuration(key string, def time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return def
-	}
-
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return def
-	}
-
-	return d
 }
