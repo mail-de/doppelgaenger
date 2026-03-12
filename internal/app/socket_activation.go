@@ -47,6 +47,9 @@ func ActivatedListeners() ([]ActivatedListenerInfo, error) {
 	infos := make([]ActivatedListenerInfo, 0, fdCount)
 	for i := 0; i < fdCount; i++ {
 		fd := uintptr(systemdListenFdsStart + i)
+		if prepErr := prepareActivatedFD(fd); prepErr != nil {
+			return nil, fmt.Errorf("prepare activated fd %d: %w", fd, prepErr)
+		}
 		file := os.NewFile(fd, fmt.Sprintf("systemd-listener-%d", fd))
 		if file == nil {
 			return nil, fmt.Errorf("failed to access activated fd %d", fd)

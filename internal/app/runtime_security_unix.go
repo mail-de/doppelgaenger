@@ -17,9 +17,15 @@ import (
 	"doppelgaenger/internal/config"
 )
 
+const runtimeSecurityAppliedEnv = "DOPPELGAENGER_RUNTIME_SECURITY_APPLIED"
+
 // ApplyRuntimeSecurity applies optional chroot and privilege dropping on unix systems.
 func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 	if cfg.RunAsUser == "" && cfg.RunAsGroup == "" && cfg.ChrootDir == "" {
+		return nil
+	}
+	if os.Getenv(runtimeSecurityAppliedEnv) == "1" {
+		logger.Info("runtime security already applied, skipping re-application")
 		return nil
 	}
 
@@ -51,6 +57,9 @@ func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 		if err = unix.Setuid(*uid); err != nil {
 			return fmt.Errorf("setuid(%d): %w", *uid, err)
 		}
+	}
+	if err = os.Setenv(runtimeSecurityAppliedEnv, "1"); err != nil {
+		return fmt.Errorf("set runtime security marker env: %w", err)
 	}
 
 	logger.Info("runtime security applied", "run_as_user", cfg.RunAsUser, "run_as_group", cfg.RunAsGroup, "supplementary_groups_count", len(groups), "chroot", cfg.ChrootDir != "")
