@@ -63,21 +63,27 @@ type Pool interface {
 }
 
 type pool struct {
-	base    *url.URL
-	client  HTTPClient
-	q       chan WorkItem
-	kind    BackendKind
-	maxBody int64
+	bases    []*url.URL
+	selector Selector
+	client   HTTPClient
+	q        chan WorkItem
+	kind     BackendKind
+	maxBody  int64
 }
 
 // NewPool initializes a backend Pool and starts the specified number of worker goroutines.
-func NewPool(kind BackendKind, base *url.URL, upstreamTLS *tls.Config, workers, queueLen int, maxBody int64) Pool {
+func NewPool(kind BackendKind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, workers, queueLen int, maxBody int64) Pool {
+	if len(bases) > 1 && selector == nil {
+		selector = &RoundRobinSelector{}
+	}
+
 	p := &pool{
-		kind:    kind,
-		base:    base,
-		client:  newHTTPClient(upstreamTLS),
-		q:       make(chan WorkItem, queueLen),
-		maxBody: maxBody,
+		kind:     kind,
+		bases:    bases,
+		selector: selector,
+		client:   newHTTPClient(upstreamTLS),
+		q:        make(chan WorkItem, queueLen),
+		maxBody:  maxBody,
 	}
 
 	for i := 0; i < workers; i++ {
@@ -105,8 +111,18 @@ func (p *pool) Enqueue(item WorkItem) error {
 func (p *pool) do(item WorkItem) BackendResult {
 	start := time.Now()
 
-	u := *p.base
-	u.Path = singleJoiningSlash(p.base.Path, item.Path)
+	base := p.selectBase(item)
+	if base == nil {
+		return BackendResult{
+			Kind:      item.Kind,
+			Err:       fmt.Errorf("%s backend has no configured base URL", p.kind),
+			Duration:  time.Since(start),
+			RequestID: item.RequestID,
+		}
+	}
+
+	u := *base
+	u.Path = singleJoiningSlash(base.Path, item.Path)
 	u.RawQuery = item.RawQuery
 
 	req, err := http.NewRequestWithContext(item.Ctx, item.Method, u.String(), bytes.NewReader(item.Body))
@@ -115,7 +131,7 @@ func (p *pool) do(item WorkItem) BackendResult {
 	}
 
 	req.Header = headers.Clone(item.Header)
-	req.Host = p.base.Host
+	req.Host = base.Host
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -142,6 +158,26 @@ func (p *pool) do(item WorkItem) BackendResult {
 		Duration:  time.Since(start),
 		RequestID: item.RequestID,
 		Proto:     resp.Proto,
+	}
+}
+
+func (p *pool) selectBase(item WorkItem) *url.URL {
+	switch len(p.bases) {
+	case 0:
+		return nil
+	case 1:
+		return p.bases[0]
+	default:
+		if p.selector == nil {
+			return p.bases[0]
+		}
+
+		idx := p.selector.Select(item, len(p.bases))
+		if idx < 0 || idx >= len(p.bases) {
+			return p.bases[0]
+		}
+
+		return p.bases[idx]
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -52,7 +53,7 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 			}
 			logger.Info("doppelgaenger starting", "version", string(version))
 			logger.Info("listening", "addr", listenAddr, "proto", proto)
-			logger.Info("backends", "primary", cfg.PrimaryBaseURL.String(), "shadow", cfg.ShadowBaseURL.String())
+			logger.Info("backends", "primary", stringifyURLs(cfg.PrimaryBaseURLs), "shadow", cfg.ShadowBaseURL.String())
 
 			if cfg.RootCAPath != "" || cfg.PrimaryRootCA != "" || cfg.ShadowRootCA != "" {
 				logger.Info("upstream CA",
@@ -84,4 +85,16 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 			return srv.Shutdown(shutdownCtx)
 		},
 	})
+}
+
+func stringifyURLs(urls []*url.URL) []string {
+	out := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if u == nil {
+			continue
+		}
+		out = append(out, u.String())
+	}
+
+	return out
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 
 	"go.uber.org/fx"
@@ -82,9 +83,11 @@ func NewUpstreamTLS(cfg config.Config) (UpstreamTLSOut, error) {
 
 // NewBackendPools builds the backend pools for primary and shadow.
 func NewBackendPools(cfg config.Config, tls UpstreamTLSIn) BackendPoolsOut {
+	primarySelector := backend.NewSelector(cfg.PrimarySelectionMode)
+
 	return BackendPoolsOut{
-		Primary: backend.NewPool(backend.BackendPrimary, cfg.PrimaryBaseURL, tls.Primary, cfg.PrimaryWorkers, cfg.PrimaryQueueLen, cfg.MaxBackendBodyBytes),
-		Shadow:  backend.NewPool(backend.BackendShadow, cfg.ShadowBaseURL, tls.Shadow, cfg.ShadowWorkers, cfg.ShadowQueueLen, cfg.MaxBackendBodyBytes),
+		Primary: backend.NewPool(backend.BackendPrimary, cfg.PrimaryBaseURLs, primarySelector, tls.Primary, cfg.PrimaryWorkers, cfg.PrimaryQueueLen, cfg.MaxBackendBodyBytes),
+		Shadow:  backend.NewPool(backend.BackendShadow, []*url.URL{cfg.ShadowBaseURL}, nil, tls.Shadow, cfg.ShadowWorkers, cfg.ShadowQueueLen, cfg.MaxBackendBodyBytes),
 	}
 }
 

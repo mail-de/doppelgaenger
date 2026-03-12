@@ -39,6 +39,16 @@ milter_timeout: "2s"
 # Applies to: HTTP protocol.
 primary_base_url: "https://127.0.0.1:9001"
 
+# primary_base_urls: list of primary HTTP backends for load distribution.
+# If set, this takes precedence over primary_base_url.
+# Applies to: HTTP protocol.
+primary_base_urls: []
+
+# primary_selection_mode: strategy for selecting one primary backend per request.
+# Supported values: "round_robin", "source_ip_hash".
+# Applies to: HTTP protocol.
+primary_selection_mode: "round_robin"
+
 # shadow_base_url: the base URL for the shadow HTTP backend.
 # Applies to: HTTP protocol.
 shadow_base_url: "https://127.0.0.1:9002"

@@ -40,7 +40,10 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 
 #### HTTP-specific Settings
 - `listen_addr`: The address the HTTP proxy listens on (e.g., `:8443`).
-- `primary_base_url` / `shadow_base_url`: Target URLs for the backends.
+- `primary_base_url`: Legacy single primary backend URL.
+- `primary_base_urls`: List of primary backend URLs.
+- `primary_selection_mode`: Primary selection strategy (`round_robin` or `source_ip_hash`).
+- `shadow_base_url`: Target URL for the shadow backend.
 - `shadow_timeout`: Time limit for requests to the shadow backend.
 - `shadow_force_header`: Header that forces shadowing for the current request.
 - `primary_request_headers`: Optional static request headers added only to primary backend requests.
@@ -70,6 +73,10 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 protocol: http # http or milter
 listen_addr: ":8443"
 primary_base_url: "https://127.0.0.1:9001"
+primary_base_urls:
+  - "https://127.0.0.1:9001"
+  - "https://127.0.0.1:9003"
+primary_selection_mode: "round_robin" # round_robin or source_ip_hash
 shadow_base_url: "https://127.0.0.1:9002"
 
 # Shadow settings
@@ -149,7 +156,7 @@ log_json: true
 ## How It Works
 
 1. **Request Arrival**: The proxy receives an HTTP(S) request.
-2. **Primary Request**: The request is always forwarded to the `primary_base_url` backend. The response from this backend is returned to the client.
+2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. The response from that backend is returned to the client.
 3. **Shadow Decision**: Based on `shadow_sample_percent` or the presence of `shadow_force_header`, the proxy decides whether to shadow the request.
 4. **Shadow Request**: If selected, the request is sent to the `shadow_base_url` backend asynchronously.
 5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode`.

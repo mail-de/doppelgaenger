@@ -17,6 +17,14 @@ tls_key_file: "/certs/key.pem"
 # primary_base_url: the base URL for the primary HTTP backend.
 primary_base_url: "http://fakehttpserver-primary:9001"
 
+# primary_base_urls: list of primary HTTP backends for load distribution.
+# If set, this takes precedence over primary_base_url.
+primary_base_urls: []
+
+# primary_selection_mode: strategy for selecting one primary backend per request.
+# Supported values: "round_robin", "source_ip_hash".
+primary_selection_mode: "round_robin"
+
 # shadow_base_url: the base URL for the shadow HTTP backend.
 shadow_base_url: "http://fakehttpserver-shadow:9002"
 

@@ -22,6 +22,13 @@ type Config struct {
 	// PrimaryBaseURL is the base URL for the primary backend that provides client responses.
 	// Applies to: HTTP protocol.
 	PrimaryBaseURL *url.URL `mapstructure:"primary_base_url"`
+	// PrimaryBaseURLs is the list of primary backends.
+	// Applies to: HTTP protocol.
+	PrimaryBaseURLs []*url.URL `mapstructure:"primary_base_urls"`
+
+	// PrimarySelectionMode controls primary backend selection strategy.
+	// Supported: round_robin, source_ip_hash.
+	PrimarySelectionMode string `mapstructure:"primary_selection_mode"`
 
 	// ShadowBaseURL is the base URL for the shadow backend where traffic is mirrored.
 	// Applies to: HTTP protocol.
@@ -198,6 +205,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
 	v.SetDefault("milter_timeout", 2*time.Second)
 	v.SetDefault("primary_base_url", "https://127.0.0.1:9001")
+	v.SetDefault("primary_base_urls", []string{})
+	v.SetDefault("primary_selection_mode", "round_robin")
 	v.SetDefault("shadow_base_url", "https://127.0.0.1:9002")
 	v.SetDefault("primary_workers", 32)
 	v.SetDefault("shadow_workers", 16)
@@ -257,6 +266,27 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("invalid protocol: %s", cfg.Protocol)
 	}
 	cfg.Protocol = protocol
+
+	if len(cfg.PrimaryBaseURLs) == 0 && cfg.PrimaryBaseURL != nil {
+		cfg.PrimaryBaseURLs = []*url.URL{cfg.PrimaryBaseURL}
+	}
+	if cfg.Protocol == "http" && len(cfg.PrimaryBaseURLs) == 0 {
+		return errors.New("at least one primary backend must be configured via primary_base_url or primary_base_urls")
+	}
+	if len(cfg.PrimaryBaseURLs) > 0 {
+		cfg.PrimaryBaseURL = cfg.PrimaryBaseURLs[0]
+	}
+
+	selectionMode := strings.ToLower(strings.TrimSpace(cfg.PrimarySelectionMode))
+	switch selectionMode {
+	case "", "round_robin", "source_ip_hash":
+		if selectionMode == "" {
+			selectionMode = "round_robin"
+		}
+	default:
+		selectionMode = "round_robin"
+	}
+	cfg.PrimarySelectionMode = selectionMode
 
 	if cfg.ShadowSamplePercent < 0 {
 		cfg.ShadowSamplePercent = 0
