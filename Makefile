@@ -8,9 +8,15 @@ export GOENV=greenteagc
 GOFLAGS=-mod=vendor
 LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 
-.PHONY: all build build-fake clean test docker-build docker-build-fake docker-run sbom
+.PHONY: all vet fix build build-fake clean test docker-build docker-build-fake docker-run sbom
 
 all: build build-fake
+
+vet:
+	go vet $(GOFLAGS) ./...
+
+fix:
+	gofmt -w $(GO_FILES)
 
 build:
 	mkdir -p build

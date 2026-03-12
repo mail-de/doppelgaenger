@@ -7,8 +7,12 @@ import (
 )
 
 const (
-	PrimarySelectionRoundRobin = "round_robin"
-	PrimarySelectionSourceIP   = "source_ip_hash"
+	SelectionRoundRobin = "round_robin"
+	SelectionSourceIP   = "source_ip_hash"
+
+	// Backward-compatible aliases used by older call sites.
+	PrimarySelectionRoundRobin = SelectionRoundRobin
+	PrimarySelectionSourceIP   = SelectionSourceIP
 )
 
 // Selector chooses a backend index for the given request.
@@ -19,7 +23,7 @@ type Selector interface {
 // NewSelector creates a backend selection strategy from config value.
 func NewSelector(mode string) Selector {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case PrimarySelectionSourceIP:
+	case SelectionSourceIP:
 		return SourceIPHashSelector{}
 	default:
 		return &RoundRobinSelector{}

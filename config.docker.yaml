@@ -28,6 +28,14 @@ primary_selection_mode: "round_robin"
 # shadow_base_url: the base URL for the shadow HTTP backend.
 shadow_base_url: "http://fakehttpserver-shadow:9002"
 
+# shadow_base_urls: list of shadow HTTP backends for load distribution.
+# If set, this takes precedence over shadow_base_url.
+shadow_base_urls: []
+
+# shadow_selection_mode: strategy for selecting one shadow backend per request.
+# Supported values: "round_robin", "source_ip_hash".
+shadow_selection_mode: "round_robin"
+
 # Shadow & Rate Limiting Settings
 # ------------------------------------------------------------------------------
 # shadow_sample_percent: percentage of traffic mirrored to shadow (0-100).

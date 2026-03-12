@@ -55,7 +55,7 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 			}
 			logger.Info("doppelgaenger starting", "version", string(version))
 			logger.Info("listening", "addr", listenAddr, "proto", proto)
-			logger.Info("backends", "primary", stringifyURLs(cfg.PrimaryBaseURLs), "shadow", cfg.ShadowBaseURL.String())
+			logger.Info("backends", "primary", stringifyURLs(cfg.PrimaryBaseURLs), "shadow", stringifyURLs(cfg.ShadowBaseURLs))
 
 			if cfg.RootCAPath != "" || cfg.PrimaryRootCA != "" || cfg.ShadowRootCA != "" {
 				logger.Info("upstream CA",

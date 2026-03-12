@@ -43,7 +43,9 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `primary_base_url`: Legacy single primary backend URL.
 - `primary_base_urls`: List of primary backend URLs.
 - `primary_selection_mode`: Primary selection strategy (`round_robin` or `source_ip_hash`).
-- `shadow_base_url`: Target URL for the shadow backend.
+- `shadow_base_url`: Legacy single shadow backend URL.
+- `shadow_base_urls`: List of shadow backend URLs.
+- `shadow_selection_mode`: Shadow selection strategy (`round_robin` or `source_ip_hash`).
 - `shadow_timeout`: Time limit for requests to the shadow backend.
 - `shadow_force_header`: Header that forces shadowing for the current request.
 - `primary_request_headers`: Optional static request headers added only to primary backend requests.
@@ -78,6 +80,10 @@ primary_base_urls:
   - "https://127.0.0.1:9003"
 primary_selection_mode: "round_robin" # round_robin or source_ip_hash
 shadow_base_url: "https://127.0.0.1:9002"
+shadow_base_urls:
+  - "https://127.0.0.1:9002"
+  - "https://127.0.0.1:9004"
+shadow_selection_mode: "round_robin" # round_robin or source_ip_hash
 
 # Shadow settings
 shadow_sample_percent: 5
@@ -158,7 +164,7 @@ log_json: true
 1. **Request Arrival**: The proxy receives an HTTP(S) request.
 2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. The response from that backend is returned to the client.
 3. **Shadow Decision**: Based on `shadow_sample_percent` or the presence of `shadow_force_header`, the proxy decides whether to shadow the request.
-4. **Shadow Request**: If selected, the request is sent to the `shadow_base_url` backend asynchronously.
+4. **Shadow Request**: If selected, the request is sent to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously.
 5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode`.
 6. **Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found.
 

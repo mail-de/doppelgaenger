@@ -31,8 +31,17 @@ type Config struct {
 	PrimarySelectionMode string `mapstructure:"primary_selection_mode"`
 
 	// ShadowBaseURL is the base URL for the shadow backend where traffic is mirrored.
+	// Deprecated: use ShadowBaseURLs.
 	// Applies to: HTTP protocol.
 	ShadowBaseURL *url.URL `mapstructure:"shadow_base_url"`
+
+	// ShadowBaseURLs is the list of shadow backends.
+	// Applies to: HTTP protocol.
+	ShadowBaseURLs []*url.URL `mapstructure:"shadow_base_urls"`
+
+	// ShadowSelectionMode controls shadow backend selection strategy.
+	// Supported: round_robin, source_ip_hash.
+	ShadowSelectionMode string `mapstructure:"shadow_selection_mode"`
 
 	// ShadowRPS defines the maximum requests per second for the shadow backend (0 disables the limit).
 	ShadowRPS float64 `mapstructure:"shadow_rps"`
@@ -208,6 +217,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("primary_base_urls", []string{})
 	v.SetDefault("primary_selection_mode", "round_robin")
 	v.SetDefault("shadow_base_url", "https://127.0.0.1:9002")
+	v.SetDefault("shadow_base_urls", []string{})
+	v.SetDefault("shadow_selection_mode", "round_robin")
 	v.SetDefault("primary_workers", 32)
 	v.SetDefault("shadow_workers", 16)
 	v.SetDefault("primary_queue", 4096)
@@ -277,16 +288,18 @@ func validate(cfg *Config) error {
 		cfg.PrimaryBaseURL = cfg.PrimaryBaseURLs[0]
 	}
 
-	selectionMode := strings.ToLower(strings.TrimSpace(cfg.PrimarySelectionMode))
-	switch selectionMode {
-	case "", "round_robin", "source_ip_hash":
-		if selectionMode == "" {
-			selectionMode = "round_robin"
-		}
-	default:
-		selectionMode = "round_robin"
+	if len(cfg.ShadowBaseURLs) == 0 && cfg.ShadowBaseURL != nil {
+		cfg.ShadowBaseURLs = []*url.URL{cfg.ShadowBaseURL}
 	}
-	cfg.PrimarySelectionMode = selectionMode
+	if cfg.Protocol == "http" && len(cfg.ShadowBaseURLs) == 0 {
+		return errors.New("at least one shadow backend must be configured via shadow_base_url or shadow_base_urls")
+	}
+	if len(cfg.ShadowBaseURLs) > 0 {
+		cfg.ShadowBaseURL = cfg.ShadowBaseURLs[0]
+	}
+
+	cfg.PrimarySelectionMode = normalizeSelectionMode(cfg.PrimarySelectionMode)
+	cfg.ShadowSelectionMode = normalizeSelectionMode(cfg.ShadowSelectionMode)
 
 	if cfg.ShadowSamplePercent < 0 {
 		cfg.ShadowSamplePercent = 0
@@ -348,5 +361,18 @@ func decodeURLHook() mapstructure.DecodeHookFuncType {
 			return data, nil
 		}
 		return parseURL(data.(string))
+	}
+}
+
+func normalizeSelectionMode(mode string) string {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	switch normalized {
+	case "", "round_robin", "source_ip_hash":
+		if normalized == "" {
+			return "round_robin"
+		}
+		return normalized
+	default:
+		return "round_robin"
 	}
 }

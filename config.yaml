@@ -50,8 +50,19 @@ primary_base_urls: []
 primary_selection_mode: "round_robin"
 
 # shadow_base_url: the base URL for the shadow HTTP backend.
+# Deprecated: use shadow_base_urls.
 # Applies to: HTTP protocol.
 shadow_base_url: "https://127.0.0.1:9002"
+
+# shadow_base_urls: list of shadow HTTP backends for load distribution.
+# If set, this takes precedence over shadow_base_url.
+# Applies to: HTTP protocol.
+shadow_base_urls: []
+
+# shadow_selection_mode: strategy for selecting one shadow backend per request.
+# Supported values: "round_robin", "source_ip_hash".
+# Applies to: HTTP protocol.
+shadow_selection_mode: "round_robin"
 
 # root_ca: path to a common CA certificate for all upstream backends.
 # Applies to: All protocols (HTTP upstreams or Milter if TLS is used).

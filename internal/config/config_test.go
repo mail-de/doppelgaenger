@@ -17,6 +17,10 @@ primary_base_urls:
   - "https://primary-b.example.com"
 primary_selection_mode: "source_ip_hash"
 shadow_base_url: "https://shadow.example.com"
+shadow_base_urls:
+  - "https://shadow-a.example.com"
+  - "https://shadow-b.example.com"
+shadow_selection_mode: "source_ip_hash"
 shadow_sample_percent: 20
 log_json: false
 path_mapping:
@@ -48,8 +52,14 @@ chroot: " /var/empty "
 	if loaded.PrimarySelectionMode != "source_ip_hash" {
 		t.Fatalf("expected primary_selection_mode source_ip_hash, got %q", loaded.PrimarySelectionMode)
 	}
-	if loaded.ShadowBaseURL == nil || loaded.ShadowBaseURL.Host != "shadow.example.com" {
-		t.Fatalf("expected shadow URL to be parsed")
+	if loaded.ShadowBaseURL == nil || loaded.ShadowBaseURL.Host != "shadow-a.example.com" {
+		t.Fatalf("expected first shadow URL to be selected")
+	}
+	if len(loaded.ShadowBaseURLs) != 2 {
+		t.Fatalf("expected 2 shadow URLs, got %d", len(loaded.ShadowBaseURLs))
+	}
+	if loaded.ShadowSelectionMode != "source_ip_hash" {
+		t.Fatalf("expected shadow_selection_mode source_ip_hash, got %q", loaded.ShadowSelectionMode)
 	}
 	if loaded.ShadowSamplePercent != 20 {
 		t.Fatalf("expected shadow sample percent 20, got %d", loaded.ShadowSamplePercent)
@@ -97,5 +107,14 @@ shadow_base_url: "https://shadow.example.com"
 	}
 	if loaded.PrimarySelectionMode != "round_robin" {
 		t.Fatalf("expected default primary selection mode round_robin, got %q", loaded.PrimarySelectionMode)
+	}
+	if len(loaded.ShadowBaseURLs) != 1 {
+		t.Fatalf("expected one derived shadow URL, got %d", len(loaded.ShadowBaseURLs))
+	}
+	if loaded.ShadowBaseURLs[0].Host != "shadow.example.com" {
+		t.Fatalf("expected derived shadow host shadow.example.com, got %q", loaded.ShadowBaseURLs[0].Host)
+	}
+	if loaded.ShadowSelectionMode != "round_robin" {
+		t.Fatalf("expected default shadow selection mode round_robin, got %q", loaded.ShadowSelectionMode)
 	}
 }
