@@ -1,0 +1,12 @@
+[Unit]
+Description=Doppelgaenger HTTP Listen Socket
+PartOf=doppelgaenger.service
+
+[Socket]
+ListenStream=8080
+FileDescriptorName=http
+NoDelay=true
+ReusePort=false
+
+[Install]
+WantedBy=sockets.target

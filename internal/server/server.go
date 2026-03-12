@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,9 +66,27 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 				)
 			}
 
+			listener, activated, err := resolveListener(cfg.ListenAddr)
+			if err != nil {
+				return err
+			}
+			if activated {
+				logger.Info("socket activation enabled", "protocol", "http")
+				if useTLS {
+					certificate, certErr := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+					if certErr != nil {
+						return certErr
+					}
+					tlsConfig := &tls.Config{Certificates: []tls.Certificate{certificate}}
+					listener = tls.NewListener(listener, tlsConfig)
+				}
+			}
+
 			go func() {
 				var err error
-				if useTLS {
+				if listener != nil {
+					err = srv.Serve(listener)
+				} else if useTLS {
 					err = srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 				} else {
 					err = srv.ListenAndServe()
@@ -97,4 +117,21 @@ func stringifyURLs(urls []*url.URL) []string {
 	}
 
 	return out
+}
+
+func resolveListener(expectedAddr string) (net.Listener, bool, error) {
+	listeners, err := app.ActivatedListeners()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(listeners) == 0 {
+		return nil, false, nil
+	}
+
+	listener, activated, pickErr := app.PickActivatedListener(listeners, "http", expectedAddr)
+	if pickErr != nil {
+		return nil, false, pickErr
+	}
+
+	return listener, activated, nil
 }

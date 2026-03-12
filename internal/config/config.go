@@ -41,7 +41,7 @@ type Config struct {
 	// Applies to: HTTP protocol.
 	MaxBackendBodyBytes int64 `mapstructure:"max_backend_body_bytes"`
 
-	// ListenAddr is the address the proxy listens on (e.g., ":8443").
+	// ListenAddr is the address the proxy listens on (e.g., ":8080").
 	// Applies to: HTTP protocol.
 	ListenAddr string `mapstructure:"listen_addr"`
 
@@ -197,7 +197,7 @@ func Load() (Config, error) {
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("protocol", "http")
-	v.SetDefault("listen_addr", ":8443")
+	v.SetDefault("listen_addr", ":8080")
 	v.SetDefault("tls_cert_file", "")
 	v.SetDefault("tls_key_file", "")
 	v.SetDefault("milter_listen_addr", ":9999")

@@ -39,7 +39,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `chroot`: Optional root directory for process isolation (must contain needed runtime files).
 
 #### HTTP-specific Settings
-- `listen_addr`: The address the HTTP proxy listens on (e.g., `:8443`).
+- `listen_addr`: The address the HTTP proxy listens on (e.g., `:8080`).
 - `primary_base_url`: Legacy single primary backend URL.
 - `primary_base_urls`: List of primary backend URLs.
 - `primary_selection_mode`: Primary selection strategy (`round_robin` or `source_ip_hash`).
@@ -71,7 +71,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 # chroot: "/var/empty/doppelgaenger"
 
 protocol: http # http or milter
-listen_addr: ":8443"
+listen_addr: ":8080"
 primary_base_url: "https://127.0.0.1:9001"
 primary_base_urls:
   - "https://127.0.0.1:9001"
@@ -189,6 +189,24 @@ Generates `sbom.cdx.json` in the project directory. During the Docker image buil
 ```
 
 For Docker usage, `docker-compose.yml` mounts `config.docker.yaml` and the fake server configs (`fakehttpserver-primary.yaml`, `fakehttpserver-shadow.yaml`).
+
+### systemd Socket Activation (Zero-Downtime Friendly)
+
+The project includes:
+- `doppelgaenger.socket`: owns the public listen socket (`8080`).
+- `doppelgaenger.service`: runs the proxy and consumes activated sockets via `LISTEN_FDS`.
+
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now doppelgaenger.socket doppelgaenger.service
+```
+
+Reload/rollout recommendation:
+```bash
+sudo systemctl restart doppelgaenger.service
+```
+With socket activation enabled, the listen socket stays available while the service is replaced. The old process drains in-flight HTTP requests via graceful shutdown (`http.Server.Shutdown`).
 
 ### Run Fake Server
 ```bash

@@ -68,6 +68,7 @@ func main() {
 		),
 		fx.Invoke(server.RegisterHooks),
 		fx.Invoke(milterproxy.RegisterHooks),
+		fx.Invoke(app.RegisterReloadHook),
 		fx.Invoke(app.ApplyRuntimeSecurity),
 	).Run()
 }

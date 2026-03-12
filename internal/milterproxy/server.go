@@ -46,9 +46,17 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *Server, logger *slog
 			logger.Info("milterproxy starting", "version", string(version))
 			logger.Info("listening", "addr", srv.Addr, "protocol", cfg.Protocol)
 
-			listener, err := net.Listen("tcp", srv.Addr)
+			listener, activated, err := resolveMilterListener(srv.Addr)
 			if err != nil {
 				return err
+			}
+			if !activated {
+				listener, err = net.Listen("tcp", srv.Addr)
+				if err != nil {
+					return err
+				}
+			} else {
+				logger.Info("socket activation enabled", "protocol", "milter")
 			}
 			srv.mu.Lock()
 			srv.listener = listener
@@ -91,4 +99,21 @@ func (s *Server) serve() error {
 		}
 		go s.Handler.HandleConn(conn)
 	}
+}
+
+func resolveMilterListener(expectedAddr string) (net.Listener, bool, error) {
+	listeners, err := app.ActivatedListeners()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(listeners) == 0 {
+		return nil, false, nil
+	}
+
+	listener, activated, pickErr := app.PickActivatedListener(listeners, "milter", expectedAddr)
+	if pickErr != nil {
+		return nil, false, pickErr
+	}
+
+	return listener, activated, nil
 }
