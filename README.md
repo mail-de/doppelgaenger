@@ -208,6 +208,8 @@ sudo systemctl restart doppelgaenger.service
 ```
 With socket activation enabled, the listen socket stays available while the service is replaced. The old process drains in-flight HTTP requests via graceful shutdown (`http.Server.Shutdown`).
 
+`systemctl reload doppelgaenger.service` is configured to trigger an asynchronous service restart (`try-restart`) so admins can keep using `reload` operationally while still getting the robust restart path.
+
 ### Run Fake Server
 ```bash
 # edit fakehttpserver.yaml (or set CONFIG_FILE to another YAML file)

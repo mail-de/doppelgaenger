@@ -8,7 +8,7 @@ Requires=doppelgaenger.socket
 Type=simple
 Environment=CONFIG_FILE=/etc/doppelgaenger/config.yaml
 ExecStart=/usr/local/bin/doppelgaenger
-ExecReload=/bin/kill -HUP $MAINPID
+ExecReload=/usr/bin/systemctl --no-block try-restart doppelgaenger.service
 Restart=on-failure
 RestartSec=2s
 LogsDirectory=doppelgaenger
