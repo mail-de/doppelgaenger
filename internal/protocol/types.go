@@ -55,6 +55,7 @@ type Event struct {
 
 type Response struct {
 	Proto    string
+	Selected string
 	Status   int
 	Header   http.Header
 	Body     []byte

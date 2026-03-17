@@ -118,6 +118,11 @@ func (h *Handler) HandleConn(conn net.Conn) {
 			return
 		}
 
+		shadowSelected := result.Shadow.Selected
+		if shadowEnabled && !result.ShadowStarted {
+			shadowSelected = "shadow_not_started"
+		}
+
 		h.logger.Info("milter_proxy",
 			"req_id", reqID,
 			"command", string(frame.Command),
@@ -125,6 +130,8 @@ func (h *Handler) HandleConn(conn net.Conn) {
 			"shadow_started", result.ShadowStarted,
 			"shadow_ok", result.ShadowOK,
 			"shadow_err", result.ShadowErr,
+			"primary_selected", result.Primary.Selected,
+			"shadow_selected", shadowSelected,
 			"decision_primary", result.Primary.Decision,
 			"decision_shadow", result.Shadow.Decision,
 			"diff", result.Compare.Diff,

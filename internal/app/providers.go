@@ -8,7 +8,6 @@ import (
 
 	"go.uber.org/fx"
 
-	"doppelgaenger/internal/backend"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/ratelimit"
 	"doppelgaenger/internal/tlsutil"
@@ -48,13 +47,6 @@ type UpstreamTLSIn struct {
 	Shadow  *tls.Config `name:"shadowTLS"`
 }
 
-// BackendPoolsOut provides primary/shadow pools.
-type BackendPoolsOut struct {
-	fx.Out
-	Primary backend.Pool `name:"primaryPool"`
-	Shadow  backend.Pool `name:"shadowPool"`
-}
-
 // NewUpstreamTLS creates TLS configs for both upstreams.
 func NewUpstreamTLS(cfg config.Config) (UpstreamTLSOut, error) {
 	primaryCA := cfg.PrimaryRootCA
@@ -78,17 +70,6 @@ func NewUpstreamTLS(cfg config.Config) (UpstreamTLSOut, error) {
 	}
 
 	return UpstreamTLSOut{Primary: primaryTLS, Shadow: shadowTLS}, nil
-}
-
-// NewBackendPools builds the backend pools for primary and shadow.
-func NewBackendPools(cfg config.Config, tls UpstreamTLSIn) BackendPoolsOut {
-	primarySelector := backend.NewSelector(cfg.PrimarySelectionMode)
-	shadowSelector := backend.NewSelector(cfg.ShadowSelectionMode)
-
-	return BackendPoolsOut{
-		Primary: backend.NewPool(backend.BackendPrimary, cfg.PrimaryBaseURLs, primarySelector, tls.Primary, cfg.PrimaryWorkers, cfg.PrimaryQueueLen, cfg.MaxBackendBodyBytes),
-		Shadow:  backend.NewPool(backend.BackendShadow, cfg.ShadowBaseURLs, shadowSelector, tls.Shadow, cfg.ShadowWorkers, cfg.ShadowQueueLen, cfg.MaxBackendBodyBytes),
-	}
 }
 
 // NewShadowLimiter creates the rate limiter for shadow traffic.

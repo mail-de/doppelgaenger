@@ -40,12 +40,13 @@ func (a MilterAdapter) NewSession(ctx context.Context, target Target) (TestSessi
 		return nil, err
 	}
 
-	return &milterSession{conn: conn, timeout: a.Timeout}, nil
+	return &milterSession{conn: conn, timeout: a.Timeout, addr: addr}, nil
 }
 
 type milterSession struct {
 	conn    net.Conn
 	timeout time.Duration
+	addr    string
 }
 
 func (s *milterSession) Send(event Event) error {
@@ -65,7 +66,7 @@ func (s *milterSession) Receive() (Response, error) {
 	}
 	frame, err := readMilterFrame(s.conn)
 	if err != nil {
-		return Response{Err: err}, err
+		return Response{Err: err, Selected: s.addr}, err
 	}
 
 	decision := milterDecision(frame.Command)
@@ -73,6 +74,7 @@ func (s *milterSession) Receive() (Response, error) {
 		Proto:    "milter",
 		Decision: decision,
 		Raw:      frame.Raw,
+		Selected: s.addr,
 	}, nil
 }
 

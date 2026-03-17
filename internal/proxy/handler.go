@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,6 +46,24 @@ type HandlerDeps struct {
 	ShadowLimiter ratelimit.Limiter
 	PathMapper    mapping.PathMapper
 	Logger        *slog.Logger
+}
+
+type httpLogPayload struct {
+	reqID         uint64
+	corrID        string
+	corrGenerated bool
+	remoteAddr    string
+	method        string
+	path          string
+	rawQuery      string
+	doShadow      bool
+	forcedShadow  bool
+	shadowStarted bool
+	primaryRes    protocol.Response
+	shadowRes     protocol.Response
+	shadowErr     string
+	compareResult protocol.CompareResult
+	compareErr    error
 }
 
 // NewHandler constructs a proxy handler with its dependencies.
@@ -118,9 +137,22 @@ func (h *Handler) Handle(c *gin.Context) {
 		doShadow = false
 	}
 
+	event := protocol.Event{
+		Kind:        "http",
+		Method:      method,
+		Path:        path,
+		PrimaryPath: primaryPath,
+		ShadowPath:  shadowPath,
+		RawQuery:    rawQuery,
+		Header:      hdr,
+		Body:        body,
+		RemoteAddr:  remoteAddr,
+		RequestID:   reqID,
+	}
+
 	primarySession, err := h.adapter.NewSession(c.Request.Context(), protocol.TargetPrimary)
 	if err != nil {
-		h.logger.Error("primary_enqueue_failed",
+		h.logger.Error("primary_session_failed",
 			"req_id", reqID,
 			"x_request_id", corrID,
 			"remote", remoteAddr,
@@ -137,35 +169,24 @@ func (h *Handler) Handle(c *gin.Context) {
 		_ = primarySession.Close()
 	}()
 
-	shadowStarted := false
-	shadowSession := protocol.TestSession(nil)
-	if doShadow {
-		shadowSession, err = h.adapter.NewSession(c.Request.Context(), protocol.TargetShadow)
-		if err == nil {
-			shadowStarted = true
-		}
-	}
-	if shadowSession != nil {
-		defer func() {
-			_ = shadowSession.Close()
-		}()
+	if err := primarySession.Send(event); err != nil {
+		h.logger.Error("primary_request_failed",
+			"req_id", reqID,
+			"x_request_id", corrID,
+			"remote", remoteAddr,
+			"method", method,
+			"path", path,
+			"err", err.Error(),
+		)
+		c.AbortWithStatus(http.StatusBadGateway)
+
+		return
 	}
 
-	event := protocol.Event{
-		Kind:        "http",
-		Method:      method,
-		Path:        path,
-		PrimaryPath: primaryPath,
-		ShadowPath:  shadowPath,
-		RawQuery:    rawQuery,
-		Header:      hdr,
-		Body:        body,
-		RemoteAddr:  remoteAddr,
-		RequestID:   reqID,
+	primaryRes, err := primarySession.Receive()
+	if err != nil && primaryRes.Err == nil {
+		primaryRes.Err = err
 	}
-
-	result := h.runner.RunEvent(c.Request.Context(), primarySession, shadowSession, event)
-	primaryRes := result.Primary
 	if primaryRes.Err != nil {
 		h.logger.Error("primary_request_failed",
 			"req_id", reqID,
@@ -189,24 +210,94 @@ func (h *Handler) Handle(c *gin.Context) {
 		_, _ = c.Writer.Write(primaryRes.Body)
 	}
 
-	shadowRes := result.Shadow
-	shadowOK := result.ShadowOK
-	shadowErr := result.ShadowErr
-	if doShadow && !shadowStarted {
-		shadowErr = "shadow_not_started"
+	payload := httpLogPayload{
+		reqID:         reqID,
+		corrID:        corrID,
+		corrGenerated: corrGenerated,
+		remoteAddr:    remoteAddr,
+		method:        method,
+		path:          path,
+		rawQuery:      rawQuery,
+		doShadow:      doShadow,
+		forcedShadow:  forcedShadow,
+		primaryRes:    primaryRes,
 	}
 
-	compareResult := result.Compare
-	compareErr := result.CompareErr
+	if !doShadow {
+		h.logHTTPResult(payload)
+		return
+	}
+
+	shadowCtx := context.Background()
+	var cancel context.CancelFunc
+	if h.runner.ShadowTimeout > 0 {
+		shadowCtx, cancel = context.WithTimeout(context.Background(), h.runner.ShadowTimeout)
+	}
+
+	shadowSession, err := h.adapter.NewSession(shadowCtx, protocol.TargetShadow)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		payload.shadowErr = "shadow_not_started"
+		h.logHTTPResult(payload)
+
+		return
+	}
+
+	payload.shadowStarted = true
+	go h.runShadowAndLog(event, shadowSession, cancel, payload)
+}
+
+func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.TestSession, cancel context.CancelFunc, payload httpLogPayload) {
+	if cancel != nil {
+		defer cancel()
+	}
+	defer func() {
+		_ = shadowSession.Close()
+	}()
+
+	if err := shadowSession.Send(event); err != nil {
+		payload.shadowRes.Err = err
+		payload.shadowErr = protocol.ErrString(err)
+		h.logHTTPResult(payload)
+		return
+	}
+
+	shadowRes, err := shadowSession.Receive()
+	if err != nil && shadowRes.Err == nil {
+		shadowRes.Err = err
+	}
+	payload.shadowRes = shadowRes
+	payload.shadowErr = protocol.ErrString(shadowRes.Err)
+
+	if h.runner.Comparator == nil {
+		payload.compareErr = fmt.Errorf("missing protocol comparator")
+		h.logHTTPResult(payload)
+		return
+	}
+
+	compareResult, compareErr := h.runner.Comparator.Compare(payload.primaryRes, shadowRes)
+	payload.compareResult = compareResult
+	payload.compareErr = compareErr
+	h.logHTTPResult(payload)
+}
+
+func (h *Handler) logHTTPResult(payload httpLogPayload) {
+	compareResult := payload.compareResult
+	if compareResult.Mode == "" {
+		compareResult.Mode = h.cfg.CompareMode
+	}
+
 	pKV := compareResult.HeaderPrimary
 	sKV := compareResult.HeaderShadow
 	diffs := compareResult.HeaderDiffs
 	hasDiff := compareResult.Diff
-	if compareErr != nil {
+	if payload.compareErr != nil {
 		hasDiff = true
 	}
 
-	if h.cfg.LogSessionOnlyOnDiff && !hasDiff && !forcedShadow {
+	if h.cfg.LogSessionOnlyOnDiff && !hasDiff && !payload.forcedShadow {
 		delete(pKV, "X-Nauthilus-Session")
 		delete(sKV, "X-Nauthilus-Session")
 
@@ -220,28 +311,45 @@ func (h *Handler) Handle(c *gin.Context) {
 		diffs = filtered
 	}
 
+	shadowSelected := payload.shadowRes.Selected
+	if payload.doShadow && !payload.shadowStarted {
+		shadowSelected = "shadow_not_started"
+	}
+
+	shadowErr := payload.shadowErr
+	if payload.doShadow && !payload.shadowStarted {
+		shadowErr = "shadow_not_started"
+	}
+
+	shadowOK := payload.shadowStarted && payload.shadowRes.Err == nil
+	if payload.doShadow && !payload.shadowStarted {
+		shadowOK = false
+	}
+
 	h.logger.Info("auth_proxy",
-		"req_id", reqID,
-		"x_request_id", corrID,
-		"x_request_id_generated", corrGenerated,
-		"remote", remoteAddr,
-		"method", method,
-		"path", path,
-		"query", rawQuery,
+		"req_id", payload.reqID,
+		"x_request_id", payload.corrID,
+		"x_request_id_generated", payload.corrGenerated,
+		"remote", payload.remoteAddr,
+		"method", payload.method,
+		"path", payload.path,
+		"query", payload.rawQuery,
 
-		"shadow_enabled", doShadow,
-		"shadow_forced", forcedShadow,
-		"shadow_started", shadowStarted,
+		"shadow_enabled", payload.doShadow,
+		"shadow_forced", payload.forcedShadow,
+		"shadow_started", payload.shadowStarted,
 
-		"primary_status", primaryRes.Status,
-		"primary_proto", primaryRes.Proto,
-		"primary_dur_ms", primaryRes.Duration.Milliseconds(),
+		"primary_status", payload.primaryRes.Status,
+		"primary_proto", payload.primaryRes.Proto,
+		"primary_selected", payload.primaryRes.Selected,
+		"primary_dur_ms", payload.primaryRes.Duration.Milliseconds(),
 		"primary_headers", pKV,
 
 		"shadow_ok", shadowOK,
-		"shadow_status", shadowRes.Status,
-		"shadow_proto", shadowRes.Proto,
-		"shadow_dur_ms", shadowRes.Duration.Milliseconds(),
+		"shadow_status", payload.shadowRes.Status,
+		"shadow_proto", payload.shadowRes.Proto,
+		"shadow_selected", shadowSelected,
+		"shadow_dur_ms", payload.shadowRes.Duration.Milliseconds(),
 		"shadow_err", shadowErr,
 		"shadow_headers", sKV,
 
@@ -251,7 +359,7 @@ func (h *Handler) Handle(c *gin.Context) {
 		"body_diff", compareResult.BodyDiff,
 		"json_diffs", compareResult.JSONDiffs,
 		"html_similarity", compareResult.HTMLSimilarity,
-		"compare_err", protocol.ErrString(compareErr),
+		"compare_err", protocol.ErrString(payload.compareErr),
 	)
 }
 

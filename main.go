@@ -53,7 +53,6 @@ func main() {
 			app.NewLogger,
 			config.Load,
 			app.NewUpstreamTLS,
-			app.NewBackendPools,
 			app.NewShadowLimiter,
 			compare.NewComparator,
 			app.NewProtocolAdapter,

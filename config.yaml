@@ -35,29 +35,20 @@ milter_timeout: "2s"
 
 # HTTP Adapter Settings
 # ------------------------------------------------------------------------------
-# primary_base_url: the base URL for the primary HTTP backend.
-# Applies to: HTTP protocol.
-primary_base_url: "https://127.0.0.1:9001"
-
 # primary_base_urls: list of primary HTTP backends for load distribution.
-# If set, this takes precedence over primary_base_url.
 # Applies to: HTTP protocol.
-primary_base_urls: []
+primary_base_urls:
+  - "https://127.0.0.1:9001"
 
 # primary_selection_mode: strategy for selecting one primary backend per request.
 # Supported values: "round_robin", "source_ip_hash".
 # Applies to: HTTP protocol.
 primary_selection_mode: "round_robin"
 
-# shadow_base_url: the base URL for the shadow HTTP backend.
-# Deprecated: use shadow_base_urls.
-# Applies to: HTTP protocol.
-shadow_base_url: "https://127.0.0.1:9002"
-
 # shadow_base_urls: list of shadow HTTP backends for load distribution.
-# If set, this takes precedence over shadow_base_url.
 # Applies to: HTTP protocol.
-shadow_base_urls: []
+shadow_base_urls:
+  - "https://127.0.0.1:9002"
 
 # shadow_selection_mode: strategy for selecting one shadow backend per request.
 # Supported values: "round_robin", "source_ip_hash".
@@ -110,27 +101,33 @@ shadow_burst: 400
 # Applies to: HTTP protocol (for Milter, milter_timeout is used).
 shadow_timeout: "150ms"
 
-# Backend Worker Settings
-# ------------------------------------------------------------------------------
-# primary_workers: number of parallel workers for the primary backend.
-# Applies to: HTTP protocol.
-primary_workers: 32
-
-# shadow_workers: number of parallel workers for the shadow backend.
-# Applies to: HTTP protocol.
-shadow_workers: 16
-
-# primary_queue: maximum queue size for primary requests.
-# Applies to: HTTP protocol.
-primary_queue: 4096
-
-# shadow_queue: maximum queue size for shadow requests.
-# Applies to: HTTP protocol.
-shadow_queue: 4096
-
 # max_backend_body_bytes: limits the size of the request body sent to backends.
 # Applies to: HTTP protocol.
 max_backend_body_bytes: 32768
+
+# upstream_http_dial_timeout: timeout for establishing upstream TCP connections.
+# Applies to: HTTP protocol.
+upstream_http_dial_timeout: "2s"
+
+# upstream_http_tls_handshake_timeout: timeout for upstream TLS handshakes.
+# Applies to: HTTP protocol.
+upstream_http_tls_handshake_timeout: "5s"
+
+# upstream_http_response_header_timeout: timeout to receive upstream response headers.
+# Applies to: HTTP protocol.
+upstream_http_response_header_timeout: "5s"
+
+# upstream_http_max_idle_conns: max idle keep-alive connections across all hosts.
+# Applies to: HTTP protocol.
+upstream_http_max_idle_conns: 1024
+
+# upstream_http_max_idle_conns_per_host: max idle keep-alive connections per host.
+# Applies to: HTTP protocol.
+upstream_http_max_idle_conns_per_host: 256
+
+# upstream_http_max_conns_per_host: max total connections per host (0 = unlimited).
+# Applies to: HTTP protocol.
+upstream_http_max_conns_per_host: 0
 
 # Header & Comparison Settings
 # ------------------------------------------------------------------------------

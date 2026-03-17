@@ -19,9 +19,6 @@ import (
 type Config struct {
 	// Protocol selects the proxy protocol (http or milter).
 	Protocol string `mapstructure:"protocol"`
-	// PrimaryBaseURL is the base URL for the primary backend that provides client responses.
-	// Applies to: HTTP protocol.
-	PrimaryBaseURL *url.URL `mapstructure:"primary_base_url"`
 	// PrimaryBaseURLs is the list of primary backends.
 	// Applies to: HTTP protocol.
 	PrimaryBaseURLs []*url.URL `mapstructure:"primary_base_urls"`
@@ -29,11 +26,6 @@ type Config struct {
 	// PrimarySelectionMode controls primary backend selection strategy.
 	// Supported: round_robin, source_ip_hash.
 	PrimarySelectionMode string `mapstructure:"primary_selection_mode"`
-
-	// ShadowBaseURL is the base URL for the shadow backend where traffic is mirrored.
-	// Deprecated: use ShadowBaseURLs.
-	// Applies to: HTTP protocol.
-	ShadowBaseURL *url.URL `mapstructure:"shadow_base_url"`
 
 	// ShadowBaseURLs is the list of shadow backends.
 	// Applies to: HTTP protocol.
@@ -49,6 +41,30 @@ type Config struct {
 	// MaxBackendBodyBytes limits the size of the request body sent to backends.
 	// Applies to: HTTP protocol.
 	MaxBackendBodyBytes int64 `mapstructure:"max_backend_body_bytes"`
+
+	// UpstreamHTTPDialTimeout limits how long TCP connect attempts to HTTP backends may take.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPDialTimeout time.Duration `mapstructure:"upstream_http_dial_timeout"`
+
+	// UpstreamHTTPTLSHandshakeTimeout limits TLS handshake time to HTTPS backends.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPTLSHandshakeTimeout time.Duration `mapstructure:"upstream_http_tls_handshake_timeout"`
+
+	// UpstreamHTTPResponseHeaderTimeout limits time to receive upstream response headers.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPResponseHeaderTimeout time.Duration `mapstructure:"upstream_http_response_header_timeout"`
+
+	// UpstreamHTTPMaxIdleConns caps idle keep-alive connections across all upstream hosts.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPMaxIdleConns int `mapstructure:"upstream_http_max_idle_conns"`
+
+	// UpstreamHTTPMaxIdleConnsPerHost caps idle keep-alive connections per upstream host.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPMaxIdleConnsPerHost int `mapstructure:"upstream_http_max_idle_conns_per_host"`
+
+	// UpstreamHTTPMaxConnsPerHost caps total (active+idle+dialing) connections per upstream host.
+	// Applies to: HTTP protocol. 0 means unlimited.
+	UpstreamHTTPMaxConnsPerHost int `mapstructure:"upstream_http_max_conns_per_host"`
 
 	// ListenAddr is the address the proxy listens on (e.g., ":8080").
 	// Applies to: HTTP protocol.
@@ -96,22 +112,6 @@ type Config struct {
 
 	// ShadowRootCA path to the CA certificate specifically for the shadow backend.
 	ShadowRootCA string `mapstructure:"shadow_root_ca"`
-
-	// PrimaryWorkers number of parallel workers for the primary backend.
-	// Applies to: HTTP protocol.
-	PrimaryWorkers int `mapstructure:"primary_workers"`
-
-	// ShadowWorkers number of parallel workers for the shadow backend.
-	// Applies to: HTTP protocol.
-	ShadowWorkers int `mapstructure:"shadow_workers"`
-
-	// PrimaryQueueLen maximum queue size for primary requests.
-	// Applies to: HTTP protocol.
-	PrimaryQueueLen int `mapstructure:"primary_queue"`
-
-	// ShadowQueueLen maximum queue size for shadow requests.
-	// Applies to: HTTP protocol.
-	ShadowQueueLen int `mapstructure:"shadow_queue"`
 
 	// ShadowSamplePercent percentage of traffic mirrored to the shadow backend (0-100).
 	ShadowSamplePercent int `mapstructure:"shadow_sample_percent"`
@@ -213,16 +213,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("primary_milter_addr", "127.0.0.1:9997")
 	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
 	v.SetDefault("milter_timeout", 2*time.Second)
-	v.SetDefault("primary_base_url", "https://127.0.0.1:9001")
-	v.SetDefault("primary_base_urls", []string{})
+	v.SetDefault("primary_base_urls", []string{"https://127.0.0.1:9001"})
 	v.SetDefault("primary_selection_mode", "round_robin")
-	v.SetDefault("shadow_base_url", "https://127.0.0.1:9002")
-	v.SetDefault("shadow_base_urls", []string{})
+	v.SetDefault("shadow_base_urls", []string{"https://127.0.0.1:9002"})
 	v.SetDefault("shadow_selection_mode", "round_robin")
-	v.SetDefault("primary_workers", 32)
-	v.SetDefault("shadow_workers", 16)
-	v.SetDefault("primary_queue", 4096)
-	v.SetDefault("shadow_queue", 4096)
 	v.SetDefault("shadow_timeout", 150*time.Millisecond)
 	v.SetDefault("shadow_sample_percent", 5)
 	v.SetDefault("shadow_force_header", "X-Shadow")
@@ -236,6 +230,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log_session_only_on_diff", true)
 	v.SetDefault("log_json", true)
 	v.SetDefault("max_backend_body_bytes", 32*1024)
+	v.SetDefault("upstream_http_dial_timeout", 2*time.Second)
+	v.SetDefault("upstream_http_tls_handshake_timeout", 5*time.Second)
+	v.SetDefault("upstream_http_response_header_timeout", 5*time.Second)
+	v.SetDefault("upstream_http_max_idle_conns", 1024)
+	v.SetDefault("upstream_http_max_idle_conns_per_host", 256)
+	v.SetDefault("upstream_http_max_conns_per_host", 0)
 	v.SetDefault("root_ca", "")
 	v.SetDefault("primary_root_ca", "")
 	v.SetDefault("shadow_root_ca", "")
@@ -278,24 +278,12 @@ func validate(cfg *Config) error {
 	}
 	cfg.Protocol = protocol
 
-	if len(cfg.PrimaryBaseURLs) == 0 && cfg.PrimaryBaseURL != nil {
-		cfg.PrimaryBaseURLs = []*url.URL{cfg.PrimaryBaseURL}
-	}
 	if cfg.Protocol == "http" && len(cfg.PrimaryBaseURLs) == 0 {
-		return errors.New("at least one primary backend must be configured via primary_base_url or primary_base_urls")
-	}
-	if len(cfg.PrimaryBaseURLs) > 0 {
-		cfg.PrimaryBaseURL = cfg.PrimaryBaseURLs[0]
+		return errors.New("at least one primary backend must be configured via primary_base_urls")
 	}
 
-	if len(cfg.ShadowBaseURLs) == 0 && cfg.ShadowBaseURL != nil {
-		cfg.ShadowBaseURLs = []*url.URL{cfg.ShadowBaseURL}
-	}
 	if cfg.Protocol == "http" && len(cfg.ShadowBaseURLs) == 0 {
-		return errors.New("at least one shadow backend must be configured via shadow_base_url or shadow_base_urls")
-	}
-	if len(cfg.ShadowBaseURLs) > 0 {
-		cfg.ShadowBaseURL = cfg.ShadowBaseURLs[0]
+		return errors.New("at least one shadow backend must be configured via shadow_base_urls")
 	}
 
 	cfg.PrimarySelectionMode = normalizeSelectionMode(cfg.PrimarySelectionMode)
@@ -309,6 +297,24 @@ func validate(cfg *Config) error {
 	}
 	if cfg.ShadowBurst < 1 && cfg.ShadowRPS > 0 {
 		cfg.ShadowBurst = 1
+	}
+	if cfg.UpstreamHTTPDialTimeout <= 0 {
+		cfg.UpstreamHTTPDialTimeout = 2 * time.Second
+	}
+	if cfg.UpstreamHTTPTLSHandshakeTimeout <= 0 {
+		cfg.UpstreamHTTPTLSHandshakeTimeout = 5 * time.Second
+	}
+	if cfg.UpstreamHTTPResponseHeaderTimeout <= 0 {
+		cfg.UpstreamHTTPResponseHeaderTimeout = 5 * time.Second
+	}
+	if cfg.UpstreamHTTPMaxIdleConns <= 0 {
+		cfg.UpstreamHTTPMaxIdleConns = 1024
+	}
+	if cfg.UpstreamHTTPMaxIdleConnsPerHost <= 0 {
+		cfg.UpstreamHTTPMaxIdleConnsPerHost = 256
+	}
+	if cfg.UpstreamHTTPMaxConnsPerHost < 0 {
+		cfg.UpstreamHTTPMaxConnsPerHost = 0
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))

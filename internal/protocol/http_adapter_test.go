@@ -8,25 +8,21 @@ import (
 	"doppelgaenger/internal/backend"
 )
 
-type mockPool struct {
-	lastItem backend.WorkItem
+type mockRequester struct {
+	lastItem backend.Request
 }
 
-func (m *mockPool) Enqueue(item backend.WorkItem) error {
+func (m *mockRequester) Do(item backend.Request) backend.BackendResult {
 	m.lastItem = item
-	// Close response channel to avoid leaks, though not strictly necessary for this test
-	go func() {
-		item.ResponseCh <- backend.BackendResult{Status: 200}
-	}()
-	return nil
+	return backend.BackendResult{Status: 200}
 }
 
 func TestHTTPAdapterUsesMappedPaths(t *testing.T) {
-	primaryPool := &mockPool{}
-	shadowPool := &mockPool{}
+	primaryRequester := &mockRequester{}
+	shadowRequester := &mockRequester{}
 	adapter := HTTPAdapter{
-		PrimaryPool: primaryPool,
-		ShadowPool:  shadowPool,
+		PrimaryRequester: primaryRequester,
+		ShadowRequester:  shadowRequester,
 	}
 
 	event := Event{
@@ -45,8 +41,8 @@ func TestHTTPAdapterUsesMappedPaths(t *testing.T) {
 	if err := ps.Send(event); err != nil {
 		t.Fatalf("failed to send event to primary: %v", err)
 	}
-	if primaryPool.lastItem.Path != "/p-rewrite" {
-		t.Errorf("expected primary path to be %q, got %q", "/p-rewrite", primaryPool.lastItem.Path)
+	if primaryRequester.lastItem.Path != "/p-rewrite" {
+		t.Errorf("expected primary path to be %q, got %q", "/p-rewrite", primaryRequester.lastItem.Path)
 	}
 
 	// Test shadow session
@@ -57,14 +53,14 @@ func TestHTTPAdapterUsesMappedPaths(t *testing.T) {
 	if err := ss.Send(event); err != nil {
 		t.Fatalf("failed to send event to shadow: %v", err)
 	}
-	if shadowPool.lastItem.Path != "/s-rewrite" {
-		t.Errorf("expected shadow path to be %q, got %q", "/s-rewrite", shadowPool.lastItem.Path)
+	if shadowRequester.lastItem.Path != "/s-rewrite" {
+		t.Errorf("expected shadow path to be %q, got %q", "/s-rewrite", shadowRequester.lastItem.Path)
 	}
 }
 
 func TestHTTPAdapterFallsBackToOriginalPath(t *testing.T) {
-	primaryPool := &mockPool{}
-	adapter := HTTPAdapter{PrimaryPool: primaryPool}
+	primaryRequester := &mockRequester{}
+	adapter := HTTPAdapter{PrimaryRequester: primaryRequester}
 
 	event := Event{
 		Path:   "/original",
@@ -75,17 +71,17 @@ func TestHTTPAdapterFallsBackToOriginalPath(t *testing.T) {
 	ps, _ := adapter.NewSession(context.Background(), TargetPrimary)
 	_ = ps.Send(event)
 
-	if primaryPool.lastItem.Path != "/original" {
-		t.Errorf("expected original path %q, got %q", "/original", primaryPool.lastItem.Path)
+	if primaryRequester.lastItem.Path != "/original" {
+		t.Errorf("expected original path %q, got %q", "/original", primaryRequester.lastItem.Path)
 	}
 }
 
 func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
-	primaryPool := &mockPool{}
-	shadowPool := &mockPool{}
+	primaryRequester := &mockRequester{}
+	shadowRequester := &mockRequester{}
 	adapter := HTTPAdapter{
-		PrimaryPool:           primaryPool,
-		ShadowPool:            shadowPool,
+		PrimaryRequester:      primaryRequester,
+		ShadowRequester:       shadowRequester,
 		PrimaryRequestHeaders: map[string]string{"X-Backend": "primary", "X-Only-Primary": "yes"},
 		ShadowRequestHeaders:  map[string]string{"X-Backend": "shadow", "X-Only-Shadow": "yes"},
 	}
@@ -104,13 +100,13 @@ func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
 		t.Fatalf("failed to send event to primary: %v", err)
 	}
 
-	if got := primaryPool.lastItem.Header.Get("X-Backend"); got != "primary" {
+	if got := primaryRequester.lastItem.Header.Get("X-Backend"); got != "primary" {
 		t.Fatalf("expected primary header override %q, got %q", "primary", got)
 	}
-	if got := primaryPool.lastItem.Header.Get("X-Only-Primary"); got != "yes" {
+	if got := primaryRequester.lastItem.Header.Get("X-Only-Primary"); got != "yes" {
 		t.Fatalf("expected primary-only header %q, got %q", "yes", got)
 	}
-	if got := primaryPool.lastItem.Header.Get("X-Only-Shadow"); got != "" {
+	if got := primaryRequester.lastItem.Header.Get("X-Only-Shadow"); got != "" {
 		t.Fatalf("did not expect shadow-only header on primary request, got %q", got)
 	}
 
@@ -122,13 +118,13 @@ func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
 		t.Fatalf("failed to send event to shadow: %v", err)
 	}
 
-	if got := shadowPool.lastItem.Header.Get("X-Backend"); got != "shadow" {
+	if got := shadowRequester.lastItem.Header.Get("X-Backend"); got != "shadow" {
 		t.Fatalf("expected shadow header override %q, got %q", "shadow", got)
 	}
-	if got := shadowPool.lastItem.Header.Get("X-Only-Shadow"); got != "yes" {
+	if got := shadowRequester.lastItem.Header.Get("X-Only-Shadow"); got != "yes" {
 		t.Fatalf("expected shadow-only header %q, got %q", "yes", got)
 	}
-	if got := shadowPool.lastItem.Header.Get("X-Only-Primary"); got != "" {
+	if got := shadowRequester.lastItem.Header.Get("X-Only-Primary"); got != "" {
 		t.Fatalf("did not expect primary-only header on shadow request, got %q", got)
 	}
 

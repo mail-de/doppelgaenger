@@ -14,23 +14,17 @@ tls_key_file: "/certs/key.pem"
 
 # HTTP Adapter Settings
 # ------------------------------------------------------------------------------
-# primary_base_url: the base URL for the primary HTTP backend.
-primary_base_url: "http://fakehttpserver-primary:9001"
-
 # primary_base_urls: list of primary HTTP backends for load distribution.
-# If set, this takes precedence over primary_base_url.
-primary_base_urls: []
+primary_base_urls:
+  - "http://fakehttpserver-primary:9001"
 
 # primary_selection_mode: strategy for selecting one primary backend per request.
 # Supported values: "round_robin", "source_ip_hash".
 primary_selection_mode: "round_robin"
 
-# shadow_base_url: the base URL for the shadow HTTP backend.
-shadow_base_url: "http://fakehttpserver-shadow:9002"
-
 # shadow_base_urls: list of shadow HTTP backends for load distribution.
-# If set, this takes precedence over shadow_base_url.
-shadow_base_urls: []
+shadow_base_urls:
+  - "http://fakehttpserver-shadow:9002"
 
 # shadow_selection_mode: strategy for selecting one shadow backend per request.
 # Supported values: "round_robin", "source_ip_hash".
@@ -59,19 +53,26 @@ shadow_burst: 400
 # shadow_timeout: time limit for requests to the shadow backend.
 shadow_timeout: "150ms"
 
-# Backend Worker Settings
-# ------------------------------------------------------------------------------
-# primary_workers: number of parallel workers for the primary backend.
-primary_workers: 32
+# max_backend_body_bytes: limits the size of the request body sent to backends.
+max_backend_body_bytes: 32768
 
-# shadow_workers: number of parallel workers for the shadow backend.
-shadow_workers: 16
+# upstream_http_dial_timeout: timeout for establishing upstream TCP connections.
+upstream_http_dial_timeout: "2s"
 
-# primary_queue: maximum queue size for primary requests.
-primary_queue: 4096
+# upstream_http_tls_handshake_timeout: timeout for upstream TLS handshakes.
+upstream_http_tls_handshake_timeout: "5s"
 
-# shadow_queue: maximum queue size for shadow requests.
-shadow_queue: 4096
+# upstream_http_response_header_timeout: timeout to receive upstream response headers.
+upstream_http_response_header_timeout: "5s"
+
+# upstream_http_max_idle_conns: max idle keep-alive connections across all hosts.
+upstream_http_max_idle_conns: 1024
+
+# upstream_http_max_idle_conns_per_host: max idle keep-alive connections per host.
+upstream_http_max_idle_conns_per_host: 256
+
+# upstream_http_max_conns_per_host: max total connections per host (0 = unlimited).
+upstream_http_max_conns_per_host: 0
 
 # Header & Comparison Settings
 # ------------------------------------------------------------------------------
@@ -112,9 +113,6 @@ log_session_only_on_diff: true
 
 # log_json: whether the logger should output JSON.
 log_json: false
-
-# max_backend_body_bytes: limits the size of the request body sent to backends.
-max_backend_body_bytes: 32768
 
 # Path Mapping Settings
 # ------------------------------------------------------------------------------

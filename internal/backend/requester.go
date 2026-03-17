@@ -15,6 +15,14 @@ import (
 	"doppelgaenger/internal/headers"
 )
 
+const (
+	defaultHTTPDialTimeout           = 2 * time.Second
+	defaultHTTPTLSHandshakeTimeout   = 5 * time.Second
+	defaultHTTPResponseHeaderTimeout = 5 * time.Second
+	defaultHTTPMaxIdleConns          = 1024
+	defaultHTTPMaxIdleConnsPerHost   = 256
+)
+
 // BackendKind distinguishes between primary and shadow backends.
 type BackendKind string
 
@@ -26,10 +34,9 @@ const (
 	BackendShadow BackendKind = "shadow"
 )
 
-// WorkItem represents a single proxy request to be processed by a worker.
-type WorkItem struct {
+// Request represents a single proxy request to be processed by a backend requester.
+type Request struct {
 	Ctx        context.Context
-	ResponseCh chan BackendResult
 	Kind       BackendKind
 	Method     string
 	Path       string
@@ -49,6 +56,7 @@ type BackendResult struct {
 	Duration  time.Duration
 	RequestID uint64
 	Kind      BackendKind
+	Selected  string
 	Status    int
 }
 
@@ -57,58 +65,46 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Pool manages a group of workers and a queue for backend requests.
-type Pool interface {
-	Enqueue(item WorkItem) error
+// HTTPClientConfig controls transport behavior for backend HTTP requests.
+type HTTPClientConfig struct {
+	DialTimeout           time.Duration
+	TLSHandshakeTimeout   time.Duration
+	ResponseHeaderTimeout time.Duration
+	MaxIdleConns          int
+	MaxIdleConnsPerHost   int
+	MaxConnsPerHost       int
 }
 
-type pool struct {
+// Requester executes backend requests directly.
+type Requester interface {
+	Do(item Request) BackendResult
+}
+
+type requester struct {
 	bases    []*url.URL
 	selector Selector
 	client   HTTPClient
-	q        chan WorkItem
 	kind     BackendKind
 	maxBody  int64
 }
 
-// NewPool initializes a backend Pool and starts the specified number of worker goroutines.
-func NewPool(kind BackendKind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, workers, queueLen int, maxBody int64) Pool {
+// NewRequester initializes a direct backend requester.
+func NewRequester(kind BackendKind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, maxBody int64, clientCfg HTTPClientConfig) Requester {
 	if len(bases) > 1 && selector == nil {
 		selector = &RoundRobinSelector{}
 	}
+	clientCfg = normalizeHTTPClientConfig(clientCfg)
 
-	p := &pool{
+	return &requester{
 		kind:     kind,
 		bases:    bases,
 		selector: selector,
-		client:   newHTTPClient(upstreamTLS),
-		q:        make(chan WorkItem, queueLen),
+		client:   newHTTPClient(upstreamTLS, clientCfg),
 		maxBody:  maxBody,
 	}
-
-	for i := 0; i < workers; i++ {
-		go func() {
-			for item := range p.q {
-				res := p.do(item)
-				item.ResponseCh <- res
-			}
-		}()
-	}
-
-	return p
 }
 
-// Enqueue adds a request to the pool's queue or returns an error if the queue is full.
-func (p *pool) Enqueue(item WorkItem) error {
-	select {
-	case p.q <- item:
-		return nil
-	default:
-		return fmt.Errorf("%s backend queue full", p.kind)
-	}
-}
-
-func (p *pool) do(item WorkItem) BackendResult {
+func (p *requester) Do(item Request) BackendResult {
 	start := time.Now()
 
 	base := p.selectBase(item)
@@ -120,6 +116,7 @@ func (p *pool) do(item WorkItem) BackendResult {
 			RequestID: item.RequestID,
 		}
 	}
+	selected := base.Redacted()
 
 	u := *base
 	u.Path = singleJoiningSlash(base.Path, item.Path)
@@ -127,7 +124,13 @@ func (p *pool) do(item WorkItem) BackendResult {
 
 	req, err := http.NewRequestWithContext(item.Ctx, item.Method, u.String(), bytes.NewReader(item.Body))
 	if err != nil {
-		return BackendResult{Kind: item.Kind, Err: err, Duration: time.Since(start), RequestID: item.RequestID}
+		return BackendResult{
+			Kind:      item.Kind,
+			Selected:  selected,
+			Err:       err,
+			Duration:  time.Since(start),
+			RequestID: item.RequestID,
+		}
 	}
 
 	req.Header = headers.Clone(item.Header)
@@ -135,7 +138,13 @@ func (p *pool) do(item WorkItem) BackendResult {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return BackendResult{Kind: item.Kind, Err: err, Duration: time.Since(start), RequestID: item.RequestID}
+		return BackendResult{
+			Kind:      item.Kind,
+			Selected:  selected,
+			Err:       err,
+			Duration:  time.Since(start),
+			RequestID: item.RequestID,
+		}
 	}
 
 	defer func(Body io.ReadCloser) {
@@ -158,10 +167,11 @@ func (p *pool) do(item WorkItem) BackendResult {
 		Duration:  time.Since(start),
 		RequestID: item.RequestID,
 		Proto:     resp.Proto,
+		Selected:  selected,
 	}
 }
 
-func (p *pool) selectBase(item WorkItem) *url.URL {
+func (p *requester) selectBase(item Request) *url.URL {
 	switch len(p.bases) {
 	case 0:
 		return nil
@@ -181,20 +191,53 @@ func (p *pool) selectBase(item WorkItem) *url.URL {
 	}
 }
 
-func newHTTPClient(upstreamTLS *tls.Config) *http.Client {
+func newHTTPClient(upstreamTLS *tls.Config, cfg HTTPClientConfig) *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   cfg.DialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           dialer.DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1024,
-		MaxIdleConnsPerHost:   256,
+		MaxIdleConns:          cfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       cfg.MaxConnsPerHost,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
+		TLSHandshakeTimeout:   cfg.TLSHandshakeTimeout,
+		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig:       upstreamTLS,
 	}
 
 	return &http.Client{Transport: transport}
+}
+
+func normalizeHTTPClientConfig(cfg HTTPClientConfig) HTTPClientConfig {
+	if cfg.DialTimeout <= 0 {
+		cfg.DialTimeout = defaultHTTPDialTimeout
+	}
+	if cfg.TLSHandshakeTimeout <= 0 {
+		cfg.TLSHandshakeTimeout = defaultHTTPTLSHandshakeTimeout
+	}
+	if cfg.ResponseHeaderTimeout < 0 {
+		cfg.ResponseHeaderTimeout = 0
+	}
+	if cfg.ResponseHeaderTimeout == 0 {
+		cfg.ResponseHeaderTimeout = defaultHTTPResponseHeaderTimeout
+	}
+	if cfg.MaxIdleConns <= 0 {
+		cfg.MaxIdleConns = defaultHTTPMaxIdleConns
+	}
+	if cfg.MaxIdleConnsPerHost <= 0 {
+		cfg.MaxIdleConnsPerHost = defaultHTTPMaxIdleConnsPerHost
+	}
+	if cfg.MaxConnsPerHost < 0 {
+		cfg.MaxConnsPerHost = 0
+	}
+
+	return cfg
 }
 
 func singleJoiningSlash(a, b string) string {

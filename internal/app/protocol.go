@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/tls"
 	"fmt"
 
 	"go.uber.org/fx"
@@ -13,17 +14,28 @@ import (
 
 type ProtocolAdapterDeps struct {
 	fx.In
-	Config      config.Config
-	PrimaryPool backend.Pool `name:"primaryPool"`
-	ShadowPool  backend.Pool `name:"shadowPool"`
+	Config     config.Config
+	PrimaryTLS *tls.Config `name:"primaryTLS"`
+	ShadowTLS  *tls.Config `name:"shadowTLS"`
 }
 
 func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.ProtocolAdapter, error) {
 	switch deps.Config.Protocol {
 	case "http":
+		primarySelector := backend.NewSelector(deps.Config.PrimarySelectionMode)
+		shadowSelector := backend.NewSelector(deps.Config.ShadowSelectionMode)
+		clientCfg := backend.HTTPClientConfig{
+			DialTimeout:           deps.Config.UpstreamHTTPDialTimeout,
+			TLSHandshakeTimeout:   deps.Config.UpstreamHTTPTLSHandshakeTimeout,
+			ResponseHeaderTimeout: deps.Config.UpstreamHTTPResponseHeaderTimeout,
+			MaxIdleConns:          deps.Config.UpstreamHTTPMaxIdleConns,
+			MaxIdleConnsPerHost:   deps.Config.UpstreamHTTPMaxIdleConnsPerHost,
+			MaxConnsPerHost:       deps.Config.UpstreamHTTPMaxConnsPerHost,
+		}
+
 		return protocol.HTTPAdapter{
-			PrimaryPool:           deps.PrimaryPool,
-			ShadowPool:            deps.ShadowPool,
+			PrimaryRequester:      backend.NewRequester(backend.BackendPrimary, deps.Config.PrimaryBaseURLs, primarySelector, deps.PrimaryTLS, deps.Config.MaxBackendBodyBytes, clientCfg),
+			ShadowRequester:       backend.NewRequester(backend.BackendShadow, deps.Config.ShadowBaseURLs, shadowSelector, deps.ShadowTLS, deps.Config.MaxBackendBodyBytes, clientCfg),
 			PrimaryRequestHeaders: deps.Config.PrimaryRequestHeaders,
 			ShadowRequestHeaders:  deps.Config.ShadowRequestHeaders,
 		}, nil

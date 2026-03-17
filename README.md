@@ -10,7 +10,6 @@ A high-performance HTTP proxy written in Go that mirrors a percentage of incomin
 - **Response Comparison**: Compares headers and optional payloads between primary and shadow responses and logs differences.
 - **Structured Logging**: Uses `slog` for detailed, machine-readable logs including performance metrics and header diffs.
 - **TLS Support**: Supports both incoming TLS and secure communication with upstream backends (with custom CA support).
-- **Concurrency Control**: Managed worker pools and queues for both primary and shadow backends.
 
 ## Configuration
 
@@ -40,19 +39,21 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 
 #### HTTP-specific Settings
 - `listen_addr`: The address the HTTP proxy listens on (e.g., `:8080`).
-- `primary_base_url`: Legacy single primary backend URL.
 - `primary_base_urls`: List of primary backend URLs.
 - `primary_selection_mode`: Primary selection strategy (`round_robin` or `source_ip_hash`).
-- `shadow_base_url`: Legacy single shadow backend URL.
 - `shadow_base_urls`: List of shadow backend URLs.
 - `shadow_selection_mode`: Shadow selection strategy (`round_robin` or `source_ip_hash`).
 - `shadow_timeout`: Time limit for requests to the shadow backend.
 - `shadow_force_header`: Header that forces shadowing for the current request.
 - `primary_request_headers`: Optional static request headers added only to primary backend requests.
 - `shadow_request_headers`: Optional static request headers added only to shadow backend requests.
-- `primary_workers` / `shadow_workers`: Number of parallel workers for each pool.
-- `primary_queue` / `shadow_queue`: Maximum queue size for backend requests.
 - `max_backend_body_bytes`: Maximum request body size forwarded to backends.
+- `upstream_http_dial_timeout`: Timeout for establishing upstream TCP connections.
+- `upstream_http_tls_handshake_timeout`: Timeout for upstream TLS handshakes.
+- `upstream_http_response_header_timeout`: Timeout for receiving upstream response headers.
+- `upstream_http_max_idle_conns`: Max idle keep-alive connections across all upstream hosts.
+- `upstream_http_max_idle_conns_per_host`: Max idle keep-alive connections per upstream host.
+- `upstream_http_max_conns_per_host`: Max total upstream connections per host (`0` means unlimited).
 - `forward_response_headers`: Headers passed from the primary backend to the client.
 - `compare_mode`: Selection of the comparison engine (`nginx`, `header`, `json`, `html`).
 - `compare_json_strict`: Enables strict mode for JSON comparison.
@@ -74,12 +75,10 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 
 protocol: http # http or milter
 listen_addr: ":8080"
-primary_base_url: "https://127.0.0.1:9001"
 primary_base_urls:
   - "https://127.0.0.1:9001"
   - "https://127.0.0.1:9003"
 primary_selection_mode: "round_robin" # round_robin or source_ip_hash
-shadow_base_url: "https://127.0.0.1:9002"
 shadow_base_urls:
   - "https://127.0.0.1:9002"
   - "https://127.0.0.1:9004"
@@ -96,12 +95,13 @@ primary_request_headers:
 shadow_request_headers:
   X-Backend-Target: shadow
 
-# Backend settings
-primary_workers: 32
-shadow_workers: 16
-primary_queue: 4096
-shadow_queue: 4096
 max_backend_body_bytes: 32768
+upstream_http_dial_timeout: "2s"
+upstream_http_tls_handshake_timeout: "5s"
+upstream_http_response_header_timeout: "5s"
+upstream_http_max_idle_conns: 1024
+upstream_http_max_idle_conns_per_host: 256
+upstream_http_max_conns_per_host: 0
 
 # Comparison settings
 compare_mode: nginx # nginx, header, json, html
@@ -164,8 +164,8 @@ log_json: true
 1. **Request Arrival**: The proxy receives an HTTP(S) request.
 2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. The response from that backend is returned to the client.
 3. **Shadow Decision**: Based on `shadow_sample_percent` or the presence of `shadow_force_header`, the proxy decides whether to shadow the request.
-4. **Shadow Request**: If selected, the request is sent to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously.
-5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode`.
+4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path.
+5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode` in background processing.
 6. **Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found.
 
 ### Milter Mode

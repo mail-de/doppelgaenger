@@ -9,15 +9,11 @@ import (
 const (
 	SelectionRoundRobin = "round_robin"
 	SelectionSourceIP   = "source_ip_hash"
-
-	// Backward-compatible aliases used by older call sites.
-	PrimarySelectionRoundRobin = SelectionRoundRobin
-	PrimarySelectionSourceIP   = SelectionSourceIP
 )
 
 // Selector chooses a backend index for the given request.
 type Selector interface {
-	Select(item WorkItem, backendCount int) int
+	Select(item Request, backendCount int) int
 }
 
 // NewSelector creates a backend selection strategy from config value.
@@ -35,7 +31,7 @@ type RoundRobinSelector struct {
 	counter atomic.Uint64
 }
 
-func (s *RoundRobinSelector) Select(_ WorkItem, backendCount int) int {
+func (s *RoundRobinSelector) Select(_ Request, backendCount int) int {
 	if backendCount <= 1 {
 		return 0
 	}
@@ -48,7 +44,7 @@ func (s *RoundRobinSelector) Select(_ WorkItem, backendCount int) int {
 // SourceIPHashSelector pins a source IP deterministically to one backend.
 type SourceIPHashSelector struct{}
 
-func (s SourceIPHashSelector) Select(item WorkItem, backendCount int) int {
+func (s SourceIPHashSelector) Select(item Request, backendCount int) int {
 	if backendCount <= 1 {
 		return 0
 	}
