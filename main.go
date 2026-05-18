@@ -1,8 +1,10 @@
+// Package main starts the Doppelgaenger proxy application.
 package main
 
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -13,6 +15,7 @@ import (
 	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/milterproxy"
+	"doppelgaenger/internal/observability"
 	"doppelgaenger/internal/proxy"
 	"doppelgaenger/internal/server"
 )
@@ -22,18 +25,20 @@ var version = "dev"
 func main() {
 	help := flag.Bool("help", false, "show help")
 	flag.BoolVar(help, "h", false, "show help")
+
 	configPath := flag.String("config", "", "path to YAML config file")
 	flag.StringVar(configPath, "c", "", "path to YAML config file")
 	flag.Parse()
 
 	if *help {
-		fmt.Fprintf(os.Stdout, "Usage: %s [--help|-h] [--config|-c <path>]\n", os.Args[0])
-		fmt.Fprintln(os.Stdout, "HTTP Shadow Proxy")
-		fmt.Fprintln(os.Stdout, "Configuration lookup order:")
-		fmt.Fprintln(os.Stdout, "  1) --config / -c")
-		fmt.Fprintln(os.Stdout, "  2) CONFIG_FILE environment variable")
-		fmt.Fprintln(os.Stdout, "  3) ./config.yaml")
-		fmt.Fprintln(os.Stdout, "  4) /etc/doppelgaenger/config.yaml")
+		_, _ = fmt.Fprintf(os.Stdout, "Usage: %s [--help|-h] [--config|-c <path>]\n", os.Args[0])
+		_, _ = fmt.Fprintln(os.Stdout, "HTTP Shadow Proxy")
+		_, _ = fmt.Fprintln(os.Stdout, "Configuration lookup order:")
+		_, _ = fmt.Fprintln(os.Stdout, "  1) --config / -c")
+		_, _ = fmt.Fprintln(os.Stdout, "  2) CONFIG_FILE environment variable")
+		_, _ = fmt.Fprintln(os.Stdout, "  3) ./config.yaml")
+		_, _ = fmt.Fprintln(os.Stdout, "  4) /etc/doppelgaenger/config.yaml")
+
 		return
 	}
 
@@ -52,6 +57,9 @@ func main() {
 		fx.Provide(
 			app.NewLogger,
 			config.Load,
+			func(cfg config.Config, version app.Version, logger *slog.Logger) (*observability.Observability, error) {
+				return observability.New(cfg, string(version), logger)
+			},
 			app.NewUpstreamTLS,
 			app.NewShadowLimiter,
 			compare.NewComparator,
@@ -67,6 +75,7 @@ func main() {
 		),
 		fx.Invoke(server.RegisterHooks),
 		fx.Invoke(milterproxy.RegisterHooks),
+		fx.Invoke(observability.RegisterHooks),
 		fx.Invoke(app.RegisterReloadHook),
 		fx.Invoke(app.ApplyRuntimeSecurity),
 	).Run()

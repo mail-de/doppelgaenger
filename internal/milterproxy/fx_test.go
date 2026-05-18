@@ -42,7 +42,7 @@ func TestMilterProxyFxWiring(t *testing.T) {
 			protocol.Runner{},
 		),
 		fx.Provide(
-			func() protocol.ProtocolAdapter { return stubAdapter{} },
+			func() protocol.Adapter { return stubAdapter{} },
 			func() ratelimit.Limiter { return stubLimiter{} },
 			milterproxy.NewHandler,
 			milterproxy.NewServer,
@@ -52,12 +52,14 @@ func TestMilterProxyFxWiring(t *testing.T) {
 
 	startCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+
 	if err := app.Start(startCtx); err != nil {
 		t.Fatalf("fx start failed: %v", err)
 	}
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
 	defer stopCancel()
+
 	if err := app.Stop(stopCtx); err != nil {
 		t.Fatalf("fx stop failed: %v", err)
 	}

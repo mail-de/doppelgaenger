@@ -22,6 +22,7 @@ type ActivatedListenerInfo struct {
 // If socket activation is not active for this process, it returns nil, nil.
 func ActivatedListeners() ([]ActivatedListenerInfo, error) {
 	pidRaw := strings.TrimSpace(os.Getenv("LISTEN_PID"))
+
 	fdsRaw := strings.TrimSpace(os.Getenv("LISTEN_FDS"))
 	if pidRaw == "" || fdsRaw == "" {
 		return nil, nil
@@ -31,6 +32,7 @@ func ActivatedListeners() ([]ActivatedListenerInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid LISTEN_PID %q: %w", pidRaw, err)
 	}
+
 	if pid != os.Getpid() {
 		return nil, nil
 	}
@@ -39,17 +41,20 @@ func ActivatedListeners() ([]ActivatedListenerInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid LISTEN_FDS %q: %w", fdsRaw, err)
 	}
+
 	if fdCount <= 0 {
 		return nil, nil
 	}
 
 	names := parseFDNames(strings.TrimSpace(os.Getenv("LISTEN_FDNAMES")), fdCount)
+
 	infos := make([]ActivatedListenerInfo, 0, fdCount)
 	for i := 0; i < fdCount; i++ {
 		fd := uintptr(systemdListenFdsStart + i)
 		if prepErr := prepareActivatedFD(fd); prepErr != nil {
 			return nil, fmt.Errorf("prepare activated fd %d: %w", fd, prepErr)
 		}
+
 		file := os.NewFile(fd, fmt.Sprintf("systemd-listener-%d", fd))
 		if file == nil {
 			return nil, fmt.Errorf("failed to access activated fd %d", fd)
@@ -57,6 +62,7 @@ func ActivatedListeners() ([]ActivatedListenerInfo, error) {
 
 		listener, listenErr := net.FileListener(file)
 		_ = file.Close()
+
 		if listenErr != nil {
 			return nil, fmt.Errorf("fd %d is not a supported listener: %w", fd, listenErr)
 		}
@@ -122,6 +128,7 @@ func closeOthers(infos []ActivatedListenerInfo, keep net.Listener) {
 		if info.Listener == nil || info.Listener == keep {
 			continue
 		}
+
 		_ = info.Listener.Close()
 	}
 }

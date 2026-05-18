@@ -7,8 +7,10 @@ import (
 )
 
 const (
+	// SelectionRoundRobin selects backends in round-robin order.
 	SelectionRoundRobin = "round_robin"
-	SelectionSourceIP   = "source_ip_hash"
+	// SelectionSourceIP selects backends deterministically by source IP.
+	SelectionSourceIP = "source_ip_hash"
 )
 
 // Selector chooses a backend index for the given request.
@@ -31,6 +33,7 @@ type RoundRobinSelector struct {
 	counter atomic.Uint64
 }
 
+// Select returns the next backend index in round-robin order.
 func (s *RoundRobinSelector) Select(_ Request, backendCount int) int {
 	if backendCount <= 1 {
 		return 0
@@ -44,6 +47,7 @@ func (s *RoundRobinSelector) Select(_ Request, backendCount int) int {
 // SourceIPHashSelector pins a source IP deterministically to one backend.
 type SourceIPHashSelector struct{}
 
+// Select returns a stable backend index for the request source IP.
 func (s SourceIPHashSelector) Select(item Request, backendCount int) int {
 	if backendCount <= 1 {
 		return 0

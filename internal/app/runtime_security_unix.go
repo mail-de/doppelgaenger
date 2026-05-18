@@ -21,11 +21,13 @@ const runtimeSecurityAppliedEnv = "DOPPELGAENGER_RUNTIME_SECURITY_APPLIED"
 
 // ApplyRuntimeSecurity applies optional chroot and privilege dropping on unix systems.
 func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
-	if cfg.RunAsUser == "" && cfg.RunAsGroup == "" && cfg.ChrootDir == "" {
+	if !runtimeSecurityRequested(cfg) {
 		return nil
 	}
+
 	if os.Getenv(runtimeSecurityAppliedEnv) == "1" {
 		logger.Info("runtime security already applied, skipping re-application")
+
 		return nil
 	}
 
@@ -35,34 +37,48 @@ func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	if cfg.ChrootDir != "" {
-		if err = applyChroot(cfg.ChrootDir); err != nil {
+		if err := applyChroot(cfg.ChrootDir); err != nil {
 			return err
 		}
+
 		logger.Info("chroot applied", "path", cfg.ChrootDir)
 	}
 
+	if err := applyResolvedIdentities(uid, gid, groups); err != nil {
+		return err
+	}
+
+	if err := os.Setenv(runtimeSecurityAppliedEnv, "1"); err != nil {
+		return fmt.Errorf("set runtime security marker env: %w", err)
+	}
+
+	logger.Info("runtime security applied", "run_as_user", cfg.RunAsUser, "run_as_group", cfg.RunAsGroup, "supplementary_groups_count", len(groups), "chroot", cfg.ChrootDir != "")
+
+	return nil
+}
+
+func runtimeSecurityRequested(cfg config.Config) bool {
+	return cfg.RunAsUser != "" || cfg.RunAsGroup != "" || cfg.ChrootDir != ""
+}
+
+func applyResolvedIdentities(uid, gid *int, groups []int) error {
 	if len(groups) > 0 {
-		if err = unix.Setgroups(groups); err != nil {
+		if err := unix.Setgroups(groups); err != nil {
 			return fmt.Errorf("set supplementary groups: %w", err)
 		}
 	}
 
 	if gid != nil {
-		if err = unix.Setgid(*gid); err != nil {
+		if err := unix.Setgid(*gid); err != nil {
 			return fmt.Errorf("setgid(%d): %w", *gid, err)
 		}
 	}
 
 	if uid != nil {
-		if err = unix.Setuid(*uid); err != nil {
+		if err := unix.Setuid(*uid); err != nil {
 			return fmt.Errorf("setuid(%d): %w", *uid, err)
 		}
 	}
-	if err = os.Setenv(runtimeSecurityAppliedEnv, "1"); err != nil {
-		return fmt.Errorf("set runtime security marker env: %w", err)
-	}
-
-	logger.Info("runtime security applied", "run_as_user", cfg.RunAsUser, "run_as_group", cfg.RunAsGroup, "supplementary_groups_count", len(groups), "chroot", cfg.ChrootDir != "")
 
 	return nil
 }
@@ -78,7 +94,9 @@ func resolveIdentities(cfg config.Config) (*int, *int, []int, error) {
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		uid = &resolvedUID
+
 		resolvedGroups, err := resolveUserSupplementaryGroups(resolvedUser)
 		if err != nil {
 			return nil, nil, nil, err
@@ -92,6 +110,7 @@ func resolveIdentities(cfg config.Config) (*int, *int, []int, error) {
 		if err != nil {
 			return nil, nil, nil, err
 		}
+
 		gid = &resolvedGID
 	}
 
@@ -132,15 +151,18 @@ func resolveUserSupplementaryGroups(u *user.User) ([]int, error) {
 	}
 
 	groups := make([]int, 0, len(groupIDs))
+
 	seen := make(map[int]struct{}, len(groupIDs))
 	for _, groupID := range groupIDs {
 		numeric, convErr := strconv.Atoi(groupID)
 		if convErr != nil {
 			return nil, fmt.Errorf("parse supplementary group id %q for user %q: %w", groupID, u.Username, convErr)
 		}
+
 		if _, ok := seen[numeric]; ok {
 			continue
 		}
+
 		seen[numeric] = struct{}{}
 		groups = append(groups, numeric)
 	}

@@ -11,8 +11,9 @@ type nginxComparator struct {
 	logger *slog.Logger
 }
 
-func (c *nginxComparator) Compare(primary, shadow backend.BackendResult) (Result, error) {
+func (c *nginxComparator) Compare(primary, shadow backend.Result) (Result, error) {
 	pKV, sKV, diffs, hasDiff := c.compareHeaders(primary.Header, shadow.Header)
+
 	return Result{
 		Mode:          ModeNginx,
 		Diff:          hasDiff,

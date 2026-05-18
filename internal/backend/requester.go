@@ -1,3 +1,4 @@
+// Package backend sends requests to configured primary and shadow HTTP backends.
 package backend
 
 import (
@@ -12,7 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"doppelgaenger/internal/headers"
+	"doppelgaenger/internal/observability"
 )
 
 const (
@@ -23,21 +29,21 @@ const (
 	defaultHTTPMaxIdleConnsPerHost   = 256
 )
 
-// BackendKind distinguishes between primary and shadow backends.
-type BackendKind string
+// Kind distinguishes between primary and shadow backends.
+type Kind string
 
 const (
 	// BackendPrimary refers to the main backend.
-	BackendPrimary BackendKind = "primary"
+	BackendPrimary Kind = "primary"
 
 	// BackendShadow refers to the shadow backend for traffic mirroring.
-	BackendShadow BackendKind = "shadow"
+	BackendShadow Kind = "shadow"
 )
 
 // Request represents a single proxy request to be processed by a backend requester.
 type Request struct {
 	Ctx        context.Context
-	Kind       BackendKind
+	Kind       Kind
 	Method     string
 	Path       string
 	RawQuery   string
@@ -47,15 +53,15 @@ type Request struct {
 	RequestID  uint64
 }
 
-// BackendResult captures a backend response.
-type BackendResult struct {
+// Result captures a backend response.
+type Result struct {
 	Header    http.Header
 	Body      []byte
 	Err       error
 	Proto     string
 	Duration  time.Duration
 	RequestID uint64
-	Kind      BackendKind
+	Kind      Kind
 	Selected  string
 	Status    int
 }
@@ -77,22 +83,31 @@ type HTTPClientConfig struct {
 
 // Requester executes backend requests directly.
 type Requester interface {
-	Do(item Request) BackendResult
+	Do(item Request) Result
 }
 
 type requester struct {
 	bases    []*url.URL
 	selector Selector
 	client   HTTPClient
-	kind     BackendKind
+	kind     Kind
 	maxBody  int64
+	obs      *observability.Observability
+}
+
+type backendObservation struct {
+	err        error
+	status     string
+	result     string
+	statusCode int
 }
 
 // NewRequester initializes a direct backend requester.
-func NewRequester(kind BackendKind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, maxBody int64, clientCfg HTTPClientConfig) Requester {
+func NewRequester(kind Kind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, maxBody int64, clientCfg HTTPClientConfig, obs *observability.Observability) Requester {
 	if len(bases) > 1 && selector == nil {
 		selector = &RoundRobinSelector{}
 	}
+
 	clientCfg = normalizeHTTPClientConfig(clientCfg)
 
 	return &requester{
@@ -101,64 +116,86 @@ func NewRequester(kind BackendKind, bases []*url.URL, selector Selector, upstrea
 		selector: selector,
 		client:   newHTTPClient(upstreamTLS, clientCfg),
 		maxBody:  maxBody,
+		obs:      obs,
 	}
 }
 
-func (p *requester) Do(item Request) BackendResult {
+func (p *requester) Do(item Request) Result {
 	start := time.Now()
+
+	ctx := requestContext(item)
+	ctx, span := p.startBackendSpan(ctx, item)
+	observation := backendObservation{
+		status: observability.StatusError,
+		result: observability.ResultError,
+	}
+
+	defer func() {
+		p.finishBackendObservation(ctx, item, span, start, observation)
+	}()
 
 	base := p.selectBase(item)
 	if base == nil {
-		return BackendResult{
-			Kind:      item.Kind,
-			Err:       fmt.Errorf("%s backend has no configured base URL", p.kind),
-			Duration:  time.Since(start),
-			RequestID: item.RequestID,
-		}
-	}
-	selected := base.Redacted()
+		observation.err = fmt.Errorf("%s backend has no configured base URL", p.kind)
 
+		return p.errorResult(item, "", observation.err, start)
+	}
+
+	req, selected, err := p.newBackendRequest(ctx, item, base, span)
+	if err != nil {
+		observation.err = err
+
+		return p.errorResult(item, selected, err, start)
+	}
+
+	return p.executeRequest(req, item, selected, start, &observation)
+}
+
+func (p *requester) newBackendRequest(ctx context.Context, item Request, base *url.URL, span trace.Span) (*http.Request, string, error) {
+	selected := base.Redacted()
 	u := *base
 	u.Path = singleJoiningSlash(base.Path, item.Path)
 	u.RawQuery = item.RawQuery
+	p.setBackendSpanAttributes(span, base, u)
 
-	req, err := http.NewRequestWithContext(item.Ctx, item.Method, u.String(), bytes.NewReader(item.Body))
+	req, err := http.NewRequestWithContext(ctx, item.Method, u.String(), bytes.NewReader(item.Body))
 	if err != nil {
-		return BackendResult{
-			Kind:      item.Kind,
-			Selected:  selected,
-			Err:       err,
-			Duration:  time.Since(start),
-			RequestID: item.RequestID,
-		}
+		return nil, selected, err
 	}
 
 	req.Header = headers.Clone(item.Header)
 	req.Host = base.Host
 
+	if p.obs != nil {
+		p.obs.InjectHTTPTraceContext(ctx, req.Header)
+	}
+
+	return req, selected, nil
+}
+
+func (p *requester) executeRequest(req *http.Request, item Request, selected string, start time.Time, observation *backendObservation) Result {
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return BackendResult{
-			Kind:      item.Kind,
-			Selected:  selected,
-			Err:       err,
-			Duration:  time.Since(start),
-			RequestID: item.RequestID,
-		}
+		observation.err = err
+
+		return p.errorResult(item, selected, err, start)
 	}
 
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(resp.Body)
 
-	var body []byte
-	if p.maxBody > 0 {
-		body, _ = io.ReadAll(io.LimitReader(resp.Body, p.maxBody))
-	} else {
-		body, _ = io.ReadAll(resp.Body)
+	body := p.readResponseBody(resp.Body)
+
+	observation.statusCode = resp.StatusCode
+	observation.status = observability.HTTPStatusClass(resp.StatusCode)
+	observation.result = observability.ResultOK
+
+	if resp.StatusCode >= http.StatusInternalServerError {
+		observation.result = observability.ResultStatusCode
 	}
 
-	return BackendResult{
+	return Result{
 		Kind:      item.Kind,
 		Status:    resp.StatusCode,
 		Header:    resp.Header,
@@ -169,6 +206,85 @@ func (p *requester) Do(item Request) BackendResult {
 		Proto:     resp.Proto,
 		Selected:  selected,
 	}
+}
+
+func (p *requester) readResponseBody(body io.Reader) []byte {
+	if p.maxBody > 0 {
+		data, _ := io.ReadAll(io.LimitReader(body, p.maxBody))
+
+		return data
+	}
+
+	data, _ := io.ReadAll(body)
+
+	return data
+}
+
+func requestContext(item Request) context.Context {
+	if item.Ctx != nil {
+		return item.Ctx
+	}
+
+	return context.Background()
+}
+
+func (p *requester) errorResult(item Request, selected string, err error, start time.Time) Result {
+	return Result{
+		Kind:      item.Kind,
+		Selected:  selected,
+		Err:       err,
+		Duration:  time.Since(start),
+		RequestID: item.RequestID,
+	}
+}
+
+func (p *requester) setBackendSpanAttributes(span trace.Span, base *url.URL, u url.URL) {
+	if span == nil {
+		return
+	}
+
+	span.SetAttributes(
+		attribute.String("server.address", base.Hostname()),
+		attribute.String("server.port", base.Port()),
+		attribute.String("url.scheme", u.Scheme),
+		attribute.String("url.path", u.EscapedPath()),
+	)
+}
+
+func (p *requester) finishBackendObservation(ctx context.Context, item Request, span trace.Span, start time.Time, observation backendObservation) {
+	if p.obs == nil {
+		return
+	}
+
+	if span != nil {
+		span.SetAttributes(
+			attribute.Int("http.response.status_code", observation.statusCode),
+			attribute.String(observability.LabelStatus, observation.status),
+			attribute.String(observability.LabelResult, observation.result),
+		)
+
+		if observation.statusCode >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(observation.statusCode))
+		}
+	}
+
+	p.obs.ObserveBackendRequest(ctx, "http", string(p.kind), item.Method, observation.status, observation.result, time.Since(start))
+	p.obs.EndSpan(span, observation.err)
+}
+
+func (p *requester) startBackendSpan(ctx context.Context, item Request) (context.Context, trace.Span) {
+	if p.obs == nil {
+		return ctx, nil
+	}
+
+	return p.obs.StartSpanWithKind(ctx,
+		fmt.Sprintf("HTTP %s %s", item.Method, p.kind),
+		trace.SpanKindClient,
+		attribute.String(observability.LabelProtocol, "http"),
+		attribute.String(observability.LabelTarget, string(p.kind)),
+		attribute.String("http.request.method", item.Method),
+		attribute.Int64("doppelgaenger.request_id", int64(item.RequestID)),
+	)
 }
 
 func (p *requester) selectBase(item Request) *url.URL {
@@ -218,21 +334,27 @@ func normalizeHTTPClientConfig(cfg HTTPClientConfig) HTTPClientConfig {
 	if cfg.DialTimeout <= 0 {
 		cfg.DialTimeout = defaultHTTPDialTimeout
 	}
+
 	if cfg.TLSHandshakeTimeout <= 0 {
 		cfg.TLSHandshakeTimeout = defaultHTTPTLSHandshakeTimeout
 	}
+
 	if cfg.ResponseHeaderTimeout < 0 {
 		cfg.ResponseHeaderTimeout = 0
 	}
+
 	if cfg.ResponseHeaderTimeout == 0 {
 		cfg.ResponseHeaderTimeout = defaultHTTPResponseHeaderTimeout
 	}
+
 	if cfg.MaxIdleConns <= 0 {
 		cfg.MaxIdleConns = defaultHTTPMaxIdleConns
 	}
+
 	if cfg.MaxIdleConnsPerHost <= 0 {
 		cfg.MaxIdleConnsPerHost = defaultHTTPMaxIdleConnsPerHost
 	}
+
 	if cfg.MaxConnsPerHost < 0 {
 		cfg.MaxConnsPerHost = 0
 	}

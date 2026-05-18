@@ -1,3 +1,4 @@
+// Package proxy handles incoming HTTP proxy requests.
 package proxy
 
 import (
@@ -14,23 +15,34 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/headers"
 	"doppelgaenger/internal/mapping"
+	"doppelgaenger/internal/observability"
 	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/ratelimit"
+)
+
+const (
+	protocolHTTP           = "http"
+	shadowNotStarted       = "shadow_not_started"
+	headerNauthilusSession = "X-Nauthilus-Session"
 )
 
 // Handler handles incoming proxy requests.
 type Handler struct {
 	cfg           config.Config
-	adapter       protocol.ProtocolAdapter
+	adapter       protocol.Adapter
 	runner        protocol.Runner
 	shadowLimiter ratelimit.Limiter
 	pathMapper    mapping.PathMapper
 	logger        *slog.Logger
+	observability *observability.Observability
 
 	requestID atomic.Uint64
 	randMu    sync.Mutex
@@ -41,15 +53,18 @@ type Handler struct {
 type HandlerDeps struct {
 	fx.In
 	Config        config.Config
-	Adapter       protocol.ProtocolAdapter
+	Adapter       protocol.Adapter
 	Runner        protocol.Runner
 	ShadowLimiter ratelimit.Limiter
 	PathMapper    mapping.PathMapper
 	Logger        *slog.Logger
+	Observability *observability.Observability `optional:"true"`
 }
 
 type httpLogPayload struct {
+	ctx           context.Context
 	reqID         uint64
+	traceID       string
 	corrID        string
 	corrGenerated bool
 	remoteAddr    string
@@ -66,6 +81,15 @@ type httpLogPayload struct {
 	compareErr    error
 }
 
+type httpRequestContext struct {
+	reqID      uint64
+	start      time.Time
+	method     string
+	path       string
+	rawQuery   string
+	remoteAddr string
+}
+
 // NewHandler constructs a proxy handler with its dependencies.
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{
@@ -75,39 +99,40 @@ func NewHandler(deps HandlerDeps) *Handler {
 		shadowLimiter: deps.ShadowLimiter,
 		pathMapper:    deps.PathMapper,
 		logger:        deps.Logger,
+		observability: deps.Observability,
 		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
 // Handle processes a single incoming request.
 func (h *Handler) Handle(c *gin.Context) {
-	reqID := h.requestID.Add(1)
+	request := h.newHTTPRequestContext(c)
 
-	var body []byte
-	if c.Request.Body != nil {
-		b, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			c.AbortWithStatus(http.StatusBadRequest)
-			return
-		}
-		body = b
+	var spanErr error
+
+	outcome := observability.OutcomeOK
+	shadowEnabledLabel := observability.BoolLabel(false)
+	shadowStartedLabel := observability.BoolLabel(false)
+
+	requestCtx, traceID, finishObservation := h.startHTTPObservation(
+		c,
+		request,
+		&outcome,
+		&shadowEnabledLabel,
+		&shadowStartedLabel,
+		&spanErr,
+	)
+	defer finishObservation()
+
+	body, ok := h.readRequestBody(c, &outcome, &spanErr)
+	if !ok {
+		return
 	}
 
-	method := c.Request.Method
-	path := c.Param("path")
-	rawQuery := c.Request.URL.RawQuery
 	hdr := headers.Clone(c.Request.Header)
-	remoteAddr := clientIP(c.Request)
 
-	primaryPath, shadowPath, err := h.pathMapper.Map(path)
-	if err != nil {
-		h.logger.Error("path_mapping_failed",
-			"req_id", reqID,
-			"remote", remoteAddr,
-			"path", path,
-			"err", err.Error(),
-		)
-		c.AbortWithStatus(http.StatusInternalServerError)
+	primaryPath, shadowPath, ok := h.mapRequestPaths(c, request, traceID, &outcome, &spanErr)
+	if !ok {
 		return
 	}
 
@@ -117,91 +142,261 @@ func (h *Handler) Handle(c *gin.Context) {
 		hdr.Set("X-Forwarded-Proto", "https")
 	}
 
-	forcedShadow := false
-	if h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != "" {
-		forcedShadow = true
-	}
+	doShadow, forcedShadow := h.shouldShadow(c)
+	shadowEnabledLabel = observability.BoolLabel(doShadow)
 
-	sampledShadow := false
-	if h.cfg.ShadowSamplePercent >= 100 {
-		sampledShadow = true
-	} else if h.cfg.ShadowSamplePercent > 0 {
-		if h.randIntn(100) < h.cfg.ShadowSamplePercent {
-			sampledShadow = true
-		}
-	}
+	event := request.event(requestCtx, hdr, body, primaryPath, shadowPath)
 
-	doShadow := forcedShadow || sampledShadow
-
-	if doShadow && !forcedShadow && h.shadowLimiter != nil && !h.shadowLimiter.Allow() {
-		doShadow = false
-	}
-
-	event := protocol.Event{
-		Kind:        "http",
-		Method:      method,
-		Path:        path,
-		PrimaryPath: primaryPath,
-		ShadowPath:  shadowPath,
-		RawQuery:    rawQuery,
-		Header:      hdr,
-		Body:        body,
-		RemoteAddr:  remoteAddr,
-		RequestID:   reqID,
-	}
-
-	primarySession, err := h.adapter.NewSession(c.Request.Context(), protocol.TargetPrimary)
-	if err != nil {
-		h.logger.Error("primary_session_failed",
-			"req_id", reqID,
-			"x_request_id", corrID,
-			"remote", remoteAddr,
-			"method", method,
-			"path", path,
-			"err", err.Error(),
-		)
-		c.AbortWithStatus(http.StatusServiceUnavailable)
-
+	primaryRes, ok := h.callPrimary(c, event, request, traceID, corrID, &outcome, &spanErr)
+	if !ok {
 		return
 	}
 
+	h.writePrimaryResponse(c, corrID, primaryRes)
+
+	payload := request.payload(requestCtx, traceID, corrID, corrGenerated, doShadow, forcedShadow, primaryRes)
+
+	if !doShadow {
+		h.logHTTPResult(payload)
+		return
+	}
+
+	h.startShadow(requestCtx, event, payload, &shadowStartedLabel)
+}
+
+func (h *Handler) newHTTPRequestContext(c *gin.Context) httpRequestContext {
+	return httpRequestContext{
+		reqID:      h.requestID.Add(1),
+		start:      time.Now(),
+		method:     c.Request.Method,
+		path:       c.Param("path"),
+		rawQuery:   c.Request.URL.RawQuery,
+		remoteAddr: clientIP(c.Request),
+	}
+}
+
+func (r httpRequestContext) event(ctx context.Context, hdr http.Header, body []byte, primaryPath, shadowPath string) protocol.Event {
+	return protocol.Event{
+		Ctx:         ctx,
+		Kind:        protocolHTTP,
+		Method:      r.method,
+		Path:        r.path,
+		PrimaryPath: primaryPath,
+		ShadowPath:  shadowPath,
+		RawQuery:    r.rawQuery,
+		Header:      hdr,
+		Body:        body,
+		RemoteAddr:  r.remoteAddr,
+		RequestID:   r.reqID,
+	}
+}
+
+func (r httpRequestContext) payload(ctx context.Context, traceID, corrID string, corrGenerated, doShadow, forcedShadow bool, primaryRes protocol.Response) httpLogPayload {
+	return httpLogPayload{
+		reqID:         r.reqID,
+		ctx:           ctx,
+		traceID:       traceID,
+		corrID:        corrID,
+		corrGenerated: corrGenerated,
+		remoteAddr:    r.remoteAddr,
+		method:        r.method,
+		path:          r.path,
+		rawQuery:      r.rawQuery,
+		doShadow:      doShadow,
+		forcedShadow:  forcedShadow,
+		primaryRes:    primaryRes,
+	}
+}
+
+func (h *Handler) startHTTPObservation(
+	c *gin.Context,
+	request httpRequestContext,
+	outcome *string,
+	shadowEnabledLabel *string,
+	shadowStartedLabel *string,
+	spanErr *error,
+) (context.Context, string, func()) {
+	requestCtx := c.Request.Context()
+	if h.observability == nil {
+		return requestCtx, "", func() {}
+	}
+
+	requestCtx = h.observability.ExtractHTTPContext(requestCtx, c.Request.Header)
+	requestCtx, span := h.observability.StartSpanWithKind(requestCtx,
+		fmt.Sprintf("HTTP %s", request.method),
+		trace.SpanKindServer,
+		attribute.String(observability.LabelProtocol, protocolHTTP),
+		attribute.String(observability.LabelMethod, request.method),
+		attribute.String("url.path", request.path),
+		attribute.String("client.address", request.remoteAddr),
+		attribute.Int64("doppelgaenger.request_id", int64(request.reqID)),
+	)
+	c.Request = c.Request.WithContext(requestCtx)
+	h.observability.SetTraceIDHeader(requestCtx, c.Writer.Header())
+	traceID := observability.TraceIDFromContext(requestCtx)
+
+	finish := func() {
+		status := c.Writer.Status()
+		span.SetAttributes(
+			attribute.Int("http.response.status_code", status),
+			attribute.String(observability.LabelOutcome, *outcome),
+			attribute.String(observability.LabelShadow, *shadowEnabledLabel),
+			attribute.String(observability.LabelShadowStarted, *shadowStartedLabel),
+		)
+
+		if status >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(status))
+		}
+
+		h.observability.ObserveIngressRequest(requestCtx, protocolHTTP, request.method, *outcome, *shadowEnabledLabel, *shadowStartedLabel, time.Since(request.start))
+		h.observability.EndSpan(span, *spanErr)
+	}
+
+	return requestCtx, traceID, finish
+}
+
+func (h *Handler) readRequestBody(c *gin.Context, outcome *string, spanErr *error) ([]byte, bool) {
+	if c.Request.Body == nil {
+		return nil, true
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		*outcome = observability.OutcomeBadRequest
+		*spanErr = err
+
+		c.AbortWithStatus(http.StatusBadRequest)
+
+		return nil, false
+	}
+
+	return body, true
+}
+
+func (h *Handler) mapRequestPaths(c *gin.Context, request httpRequestContext, traceID string, outcome *string, spanErr *error) (string, string, bool) {
+	primaryPath, shadowPath, err := h.pathMapper.Map(request.path)
+	if err == nil {
+		return primaryPath, shadowPath, true
+	}
+
+	*outcome = observability.OutcomeError
+	*spanErr = err
+	h.logger.Error("path_mapping_failed",
+		"req_id", request.reqID,
+		"trace_id", traceID,
+		"remote", request.remoteAddr,
+		"path", request.path,
+		"err", err.Error(),
+	)
+	c.AbortWithStatus(http.StatusInternalServerError)
+
+	return "", "", false
+}
+
+func (h *Handler) shouldShadow(c *gin.Context) (bool, bool) {
+	forcedShadow := h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != ""
+	sampledShadow := h.sampleShadow()
+	doShadow := forcedShadow || sampledShadow
+
+	if doShadow && !forcedShadow && h.shadowLimiter != nil && !h.shadowLimiter.Allow() {
+		return false, forcedShadow
+	}
+
+	return doShadow, forcedShadow
+}
+
+func (h *Handler) sampleShadow() bool {
+	if h.cfg.ShadowSamplePercent >= 100 {
+		return true
+	}
+
+	if h.cfg.ShadowSamplePercent <= 0 {
+		return false
+	}
+
+	return h.randIntn(100) < h.cfg.ShadowSamplePercent
+}
+
+func (h *Handler) callPrimary(
+	c *gin.Context,
+	event protocol.Event,
+	request httpRequestContext,
+	traceID string,
+	corrID string,
+	outcome *string,
+	spanErr *error,
+) (protocol.Response, bool) {
+	primarySession, err := h.adapter.NewSession(c.Request.Context(), protocol.TargetPrimary)
+	if err != nil {
+		h.failPrimarySession(c, err, request, traceID, corrID, outcome, spanErr)
+
+		return protocol.Response{}, false
+	}
 	defer func() {
 		_ = primarySession.Close()
 	}()
 
 	if err := primarySession.Send(event); err != nil {
-		h.logger.Error("primary_request_failed",
-			"req_id", reqID,
-			"x_request_id", corrID,
-			"remote", remoteAddr,
-			"method", method,
-			"path", path,
-			"err", err.Error(),
-		)
-		c.AbortWithStatus(http.StatusBadGateway)
+		h.failPrimaryRequest(c, err, request, traceID, corrID, outcome, spanErr, 0)
 
-		return
+		return protocol.Response{}, false
 	}
 
 	primaryRes, err := primarySession.Receive()
 	if err != nil && primaryRes.Err == nil {
 		primaryRes.Err = err
 	}
-	if primaryRes.Err != nil {
-		h.logger.Error("primary_request_failed",
-			"req_id", reqID,
-			"x_request_id", corrID,
-			"remote", remoteAddr,
-			"method", method,
-			"path", path,
-			"err", primaryRes.Err.Error(),
-			"dur_ms", primaryRes.Duration.Milliseconds(),
-		)
-		c.AbortWithStatus(http.StatusBadGateway)
 
-		return
+	if primaryRes.Err != nil {
+		h.failPrimaryRequest(c, primaryRes.Err, request, traceID, corrID, outcome, spanErr, primaryRes.Duration.Milliseconds())
+
+		return protocol.Response{}, false
 	}
 
+	return primaryRes, true
+}
+
+func (h *Handler) failPrimarySession(c *gin.Context, err error, request httpRequestContext, traceID, corrID string, outcome *string, spanErr *error) {
+	*outcome = observability.OutcomePrimaryError
+	*spanErr = err
+	h.logger.Error("primary_session_failed",
+		"req_id", request.reqID,
+		"trace_id", traceID,
+		"x_request_id", corrID,
+		"remote", request.remoteAddr,
+		"method", request.method,
+		"path", request.path,
+		"err", err.Error(),
+	)
+	c.AbortWithStatus(http.StatusServiceUnavailable)
+}
+
+func (h *Handler) failPrimaryRequest(
+	c *gin.Context,
+	err error,
+	request httpRequestContext,
+	traceID string,
+	corrID string,
+	outcome *string,
+	spanErr *error,
+	durationMillis int64,
+) {
+	*outcome = observability.OutcomePrimaryError
+	*spanErr = err
+	h.logger.Error("primary_request_failed",
+		"req_id", request.reqID,
+		"trace_id", traceID,
+		"x_request_id", corrID,
+		"remote", request.remoteAddr,
+		"method", request.method,
+		"path", request.path,
+		"err", err.Error(),
+		"dur_ms", durationMillis,
+	)
+	c.AbortWithStatus(http.StatusBadGateway)
+}
+
+func (h *Handler) writePrimaryResponse(c *gin.Context, corrID string, primaryRes protocol.Response) {
 	headers.WriteSelected(c.Writer, primaryRes.Header, h.cfg.ForwardResponseHeaders)
 	c.Writer.Header().Set("X-Request-ID", corrID)
 	c.Status(primaryRes.Status)
@@ -209,29 +404,14 @@ func (h *Handler) Handle(c *gin.Context) {
 	if len(primaryRes.Body) > 0 {
 		_, _ = c.Writer.Write(primaryRes.Body)
 	}
+}
 
-	payload := httpLogPayload{
-		reqID:         reqID,
-		corrID:        corrID,
-		corrGenerated: corrGenerated,
-		remoteAddr:    remoteAddr,
-		method:        method,
-		path:          path,
-		rawQuery:      rawQuery,
-		doShadow:      doShadow,
-		forcedShadow:  forcedShadow,
-		primaryRes:    primaryRes,
-	}
+func (h *Handler) startShadow(requestCtx context.Context, event protocol.Event, payload httpLogPayload, shadowStartedLabel *string) {
+	shadowCtx := context.WithoutCancel(requestCtx)
 
-	if !doShadow {
-		h.logHTTPResult(payload)
-		return
-	}
-
-	shadowCtx := context.Background()
 	var cancel context.CancelFunc
 	if h.runner.ShadowTimeout > 0 {
-		shadowCtx, cancel = context.WithTimeout(context.Background(), h.runner.ShadowTimeout)
+		shadowCtx, cancel = context.WithTimeout(shadowCtx, h.runner.ShadowTimeout)
 	}
 
 	shadowSession, err := h.adapter.NewSession(shadowCtx, protocol.TargetShadow)
@@ -239,13 +419,16 @@ func (h *Handler) Handle(c *gin.Context) {
 		if cancel != nil {
 			cancel()
 		}
-		payload.shadowErr = "shadow_not_started"
+
+		payload.shadowErr = shadowNotStarted
 		h.logHTTPResult(payload)
 
 		return
 	}
 
 	payload.shadowStarted = true
+	*shadowStartedLabel = observability.BoolLabel(true)
+
 	go h.runShadowAndLog(event, shadowSession, cancel, payload)
 }
 
@@ -253,6 +436,7 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 	if cancel != nil {
 		defer cancel()
 	}
+
 	defer func() {
 		_ = shadowSession.Close()
 	}()
@@ -261,6 +445,7 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 		payload.shadowRes.Err = err
 		payload.shadowErr = protocol.ErrString(err)
 		h.logHTTPResult(payload)
+
 		return
 	}
 
@@ -268,12 +453,14 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 	if err != nil && shadowRes.Err == nil {
 		shadowRes.Err = err
 	}
+
 	payload.shadowRes = shadowRes
 	payload.shadowErr = protocol.ErrString(shadowRes.Err)
 
 	if h.runner.Comparator == nil {
 		payload.compareErr = fmt.Errorf("missing protocol comparator")
 		h.logHTTPResult(payload)
+
 		return
 	}
 
@@ -284,50 +471,17 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 }
 
 func (h *Handler) logHTTPResult(payload httpLogPayload) {
-	compareResult := payload.compareResult
-	if compareResult.Mode == "" {
-		compareResult.Mode = h.cfg.CompareMode
-	}
+	compareResult := h.normalizedCompareResult(payload.compareResult)
+	pKV, sKV, diffs, hasDiff := h.filteredHeaderLogFields(payload, compareResult)
+	shadowSelected, shadowErr, shadowOK := shadowLogFields(payload)
 
-	pKV := compareResult.HeaderPrimary
-	sKV := compareResult.HeaderShadow
-	diffs := compareResult.HeaderDiffs
-	hasDiff := compareResult.Diff
-	if payload.compareErr != nil {
-		hasDiff = true
-	}
-
-	if h.cfg.LogSessionOnlyOnDiff && !hasDiff && !payload.forcedShadow {
-		delete(pKV, "X-Nauthilus-Session")
-		delete(sKV, "X-Nauthilus-Session")
-
-		filtered := make([]headers.HeaderDiff, 0, len(diffs))
-		for _, d := range diffs {
-			if d.Key == "X-Nauthilus-Session" {
-				continue
-			}
-			filtered = append(filtered, d)
-		}
-		diffs = filtered
-	}
-
-	shadowSelected := payload.shadowRes.Selected
-	if payload.doShadow && !payload.shadowStarted {
-		shadowSelected = "shadow_not_started"
-	}
-
-	shadowErr := payload.shadowErr
-	if payload.doShadow && !payload.shadowStarted {
-		shadowErr = "shadow_not_started"
-	}
-
-	shadowOK := payload.shadowStarted && payload.shadowRes.Err == nil
-	if payload.doShadow && !payload.shadowStarted {
-		shadowOK = false
+	if h.observability != nil {
+		h.observability.ObserveComparison(payload.ctx, protocolHTTP, comparisonMetricResult(payload, hasDiff))
 	}
 
 	h.logger.Info("auth_proxy",
 		"req_id", payload.reqID,
+		"trace_id", payload.traceID,
 		"x_request_id", payload.corrID,
 		"x_request_id_generated", payload.corrGenerated,
 		"remote", payload.remoteAddr,
@@ -361,6 +515,75 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		"html_similarity", compareResult.HTMLSimilarity,
 		"compare_err", protocol.ErrString(payload.compareErr),
 	)
+}
+
+func (h *Handler) normalizedCompareResult(compareResult protocol.CompareResult) protocol.CompareResult {
+	if compareResult.Mode == "" {
+		compareResult.Mode = h.cfg.CompareMode
+	}
+
+	return compareResult
+}
+
+func (h *Handler) filteredHeaderLogFields(payload httpLogPayload, compareResult protocol.CompareResult) (map[string]string, map[string]string, []headers.HeaderDiff, bool) {
+	pKV := compareResult.HeaderPrimary
+	sKV := compareResult.HeaderShadow
+	diffs := compareResult.HeaderDiffs
+	hasDiff := compareResult.Diff || payload.compareErr != nil
+
+	if !h.shouldHideSessionHeaders(payload, hasDiff) {
+		return pKV, sKV, diffs, hasDiff
+	}
+
+	delete(pKV, headerNauthilusSession)
+	delete(sKV, headerNauthilusSession)
+
+	return pKV, sKV, filterSessionDiffs(diffs), hasDiff
+}
+
+func (h *Handler) shouldHideSessionHeaders(payload httpLogPayload, hasDiff bool) bool {
+	return h.cfg.LogSessionOnlyOnDiff && !hasDiff && !payload.forcedShadow
+}
+
+func filterSessionDiffs(diffs []headers.HeaderDiff) []headers.HeaderDiff {
+	filtered := make([]headers.HeaderDiff, 0, len(diffs))
+	for _, diff := range diffs {
+		if diff.Key == headerNauthilusSession {
+			continue
+		}
+
+		filtered = append(filtered, diff)
+	}
+
+	return filtered
+}
+
+func shadowLogFields(payload httpLogPayload) (string, string, bool) {
+	if payload.doShadow && !payload.shadowStarted {
+		return shadowNotStarted, shadowNotStarted, false
+	}
+
+	return payload.shadowRes.Selected, payload.shadowErr, payload.shadowStarted && payload.shadowRes.Err == nil
+}
+
+func comparisonMetricResult(payload httpLogPayload, hasDiff bool) string {
+	if payload.doShadow && payload.shadowErr != "" {
+		return observability.ResultError
+	}
+
+	if !payload.doShadow || !payload.shadowStarted {
+		return observability.ResultSkipped
+	}
+
+	if payload.compareErr != nil {
+		return observability.ResultError
+	}
+
+	if hasDiff {
+		return observability.ResultDiff
+	}
+
+	return observability.ResultSame
 }
 
 func (h *Handler) randIntn(n int) int {

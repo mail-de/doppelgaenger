@@ -27,6 +27,7 @@ func RegisterReloadHook(lc fx.Lifecycle, logger *slog.Logger) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
 			signal.Notify(ch, syscall.SIGHUP)
+
 			go func() {
 				for {
 					select {
@@ -43,6 +44,7 @@ func RegisterReloadHook(lc fx.Lifecycle, logger *slog.Logger) {
 		OnStop: func(_ context.Context) error {
 			close(done)
 			signal.Stop(ch)
+
 			return nil
 		},
 	})

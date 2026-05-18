@@ -1,3 +1,4 @@
+// Package compare compares primary and shadow backend responses.
 package compare
 
 import (
@@ -12,14 +13,17 @@ import (
 )
 
 const (
+	// ModeNginx compares response headers in the nginx auth-request style.
 	ModeNginx = "nginx"
-	ModeJSON  = "json"
-	ModeHTML  = "html"
+	// ModeJSON compares response bodies as JSON.
+	ModeJSON = "json"
+	// ModeHTML compares response bodies as HTML text.
+	ModeHTML = "html"
 )
 
 // Comparator compares primary and shadow responses.
 type Comparator interface {
-	Compare(primary, shadow backend.BackendResult) (Result, error)
+	Compare(primary, shadow backend.Result) (Result, error)
 }
 
 // Result captures comparison details for logging.

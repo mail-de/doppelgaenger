@@ -9,6 +9,7 @@ A high-performance HTTP proxy written in Go that mirrors a percentage of incomin
 - **Sampling & Rate Limiting**: Configure the percentage of traffic to shadow and apply rate limits (RPS/Burst) to protect the shadow environment.
 - **Response Comparison**: Compares headers and optional payloads between primary and shadow responses and logs differences.
 - **Structured Logging**: Uses `slog` for detailed, machine-readable logs including performance metrics and header diffs.
+- **Observability**: Optional OpenMetrics/Prometheus endpoint plus OpenTelemetry OTLP traces and metrics for ingress, primary, shadow, and comparison paths.
 - **TLS Support**: Supports both incoming TLS and secure communication with upstream backends (with custom CA support).
 
 ## Configuration
@@ -65,6 +66,21 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `primary_milter_addr` / `shadow_milter_addr`: TCP addresses of the Milter backends.
 - `milter_timeout`: Timeout for Milter upstream operations.
 
+#### Observability Settings
+- `observability.prometheus_enabled`: Starts the dedicated OpenMetrics/Prometheus scrape endpoint.
+- `observability.prometheus_address` / `observability.prometheus_port` / `observability.prometheus_path`: Bind settings for the scrape endpoint.
+- `observability.prometheus_runtime_metrics`: Adds Go runtime and process collectors.
+- `observability.prometheus_http_auth_basic`: Optional `user:password` Basic Auth for the scrape endpoint.
+- `observability.prometheus_tls`: Optional server-side TLS for the scrape endpoint (`enabled`, `cert`, `key`, `min_tls_version`).
+- `observability.otel_enabled`: Master switch for OpenTelemetry export.
+- `observability.otel_traces_enabled` / `observability.otel_metrics_enabled`: Separate OTLP trace and metric export switches.
+- `observability.otel_service_name` / `observability.otel_service_version`: Resource identity for exported telemetry.
+- `observability.otel_exporter_otlp_endpoint`: OTLP HTTP collector endpoint, required when OpenTelemetry is enabled.
+- `observability.otel_exporter_otlp_headers`: Optional headers for the OTLP exporter.
+- `observability.otel_exporter_otlp_insecure`: Uses insecure OTLP HTTP transport.
+- `observability.otel_sample_ratio`: Parent-based trace sampling ratio from `0.0` to `1.0`.
+- `observability.trace_id_header`: Bare trace ID header added to responses and outgoing HTTP primary/shadow requests; `traceparent` is always the standard W3C propagation carrier.
+
 ### Configuration Example
 
 ```yaml
@@ -114,6 +130,31 @@ compare_html_threshold: 0.99
 # Logging
 log_json: true
 log_session_only_on_diff: true
+
+# Observability
+observability:
+  prometheus_enabled: false
+  prometheus_address: "127.0.0.1"
+  prometheus_port: 9464
+  prometheus_path: "/metrics"
+  prometheus_runtime_metrics: false
+  # prometheus_http_auth_basic: "metrics:change-me"
+  prometheus_tls:
+    enabled: false
+    # cert: "/etc/doppelgaenger/metrics.crt"
+    # key: "/etc/doppelgaenger/metrics.key"
+    min_tls_version: "1.2"
+  otel_enabled: false
+  otel_traces_enabled: false
+  otel_metrics_enabled: false
+  otel_service_name: "doppelgaenger"
+  # otel_service_version defaults to the binary version.
+  # otel_exporter_otlp_endpoint: "http://127.0.0.1:4318"
+  # otel_exporter_otlp_headers:
+  #   authorization: "Bearer token"
+  otel_exporter_otlp_insecure: false
+  otel_sample_ratio: 1.0
+  trace_id_header: "X-Trace-ID"
 
 # TLS (optional)
 # tls_cert_file: "/path/to/cert.pem"
@@ -166,10 +207,43 @@ log_json: true
 3. **Shadow Decision**: Based on `shadow_sample_percent` or the presence of `shadow_force_header`, the proxy decides whether to shadow the request.
 4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path.
 5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode` in background processing.
-6. **Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found.
+6. **Observability & Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found. When tracing is active, outgoing HTTP primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID header.
 
 ### Milter Mode
 When `protocol: milter`, the proxy listens on `milter_listen_addr` and forwards incoming Milter frames to the primary backend, mirrors them to the shadow backend, compares decisions/raw frames, and logs any differences.
+
+## Observability
+
+Observability is disabled by default. When enabled, the proxy records:
+
+- Incoming HTTP requests and Milter frames with outcome, duration, and shadow-start labels.
+- Outgoing Primary and Shadow backend exchanges with protocol, target, method/command, status/decision, result, and duration.
+- Primary/Shadow comparison outcomes (`same`, `diff`, `error`, `skipped`).
+
+The Prometheus endpoint uses `promhttp` with OpenMetrics negotiation enabled. Example:
+
+```yaml
+observability:
+  prometheus_enabled: true
+  prometheus_address: "127.0.0.1"
+  prometheus_port: 9464
+  prometheus_path: "/metrics"
+  prometheus_http_auth_basic: "metrics:secret"
+```
+
+OpenTelemetry uses OTLP over HTTP:
+
+```yaml
+observability:
+  otel_enabled: true
+  otel_traces_enabled: true
+  otel_metrics_enabled: true
+  otel_exporter_otlp_endpoint: "http://127.0.0.1:4318"
+  otel_exporter_otlp_insecure: true
+  otel_sample_ratio: 1.0
+```
+
+Incoming HTTP `traceparent` is extracted and continued. Outgoing HTTP requests to Primary and Shadow receive the active W3C trace context and the configured `trace_id_header` value. In Milter mode there is no standard header carrier, so the proxy emits spans/metrics for the TCP frame and backend exchanges but does not invent protocol payload fields.
 
 ## Building and Running
 

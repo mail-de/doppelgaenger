@@ -9,7 +9,9 @@ func prepareActivatedFD(fd uintptr) error {
 	if err != nil {
 		return err
 	}
+
 	flags &^= unix.FD_CLOEXEC
 	_, err = unix.FcntlInt(fd, unix.F_SETFD, flags)
+
 	return err
 }

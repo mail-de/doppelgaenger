@@ -36,6 +36,7 @@ func TestSourceIPHashSelectorNormalizesHostPort(t *testing.T) {
 
 	hostOnly := selector.Select(Request{RemoteAddr: "198.51.100.42"}, 7)
 	hostPort := selector.Select(Request{RemoteAddr: "198.51.100.42:5555"}, 7)
+
 	if hostOnly != hostPort {
 		t.Fatalf("expected host and host:port to map to same backend, got %d vs %d", hostOnly, hostPort)
 	}

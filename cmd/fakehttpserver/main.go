@@ -1,3 +1,4 @@
+// Package main starts the fake HTTP backend server.
 package main
 
 import (

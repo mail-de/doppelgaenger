@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -8,37 +9,51 @@ import (
 	"doppelgaenger/internal/headers"
 )
 
+// Target identifies which backend side a session talks to.
 type Target string
 
 const (
+	// TargetPrimary identifies the primary backend side.
 	TargetPrimary Target = "primary"
-	TargetShadow  Target = "shadow"
+	// TargetShadow identifies the shadow backend side.
+	TargetShadow = "shadow"
 )
 
+// Decision describes a normalized Milter response decision.
 type Decision string
 
 const (
-	DecisionAccept   Decision = "accept"
-	DecisionReject   Decision = "reject"
+	// DecisionAccept accepts the SMTP transaction.
+	DecisionAccept Decision = "accept"
+	// DecisionReject rejects the SMTP transaction.
+	DecisionReject Decision = "reject"
+	// DecisionTempfail temporarily fails the SMTP transaction.
 	DecisionTempfail Decision = "tempfail"
-	DecisionDiscard  Decision = "discard"
+	// DecisionDiscard discards the SMTP transaction.
+	DecisionDiscard Decision = "discard"
+	// DecisionContinue continues SMTP processing.
 	DecisionContinue Decision = "continue"
-	DecisionUnknown  Decision = "unknown"
+	// DecisionUnknown captures unknown or non-terminal decisions.
+	DecisionUnknown Decision = "unknown"
 )
 
+// Action describes a normalized Milter action.
 type Action struct {
 	Type  string
 	Name  string
 	Value string
 }
 
+// ActionDiff describes whether an action is present in primary and shadow responses.
 type ActionDiff struct {
 	Action  Action
 	Primary bool
 	Shadow  bool
 }
 
+// Event describes one proxy event passed through a protocol runner.
 type Event struct {
+	Ctx         context.Context
 	Kind        string
 	Method      string
 	Path        string
@@ -53,6 +68,7 @@ type Event struct {
 	Meta        map[string]string
 }
 
+// Response describes one primary or shadow protocol response.
 type Response struct {
 	Proto    string
 	Selected string
@@ -67,6 +83,7 @@ type Response struct {
 	RawTrace []string
 }
 
+// CompareResult captures protocol-level comparison details.
 type CompareResult struct {
 	Mode           string
 	Diff           bool

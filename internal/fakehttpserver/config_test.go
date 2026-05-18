@@ -9,6 +9,7 @@ import (
 func TestLoadReadsConfigFile(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "fakehttpserver.yaml")
+
 	configContent := []byte(`
 listen_addr: ":9100"
 mode: random
@@ -22,22 +23,28 @@ log_json: false
 	}
 
 	t.Setenv("CONFIG_FILE", configPath)
+
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("expected config to load, got error: %v", err)
 	}
+
 	if loaded.ListenAddr != ":9100" {
 		t.Fatalf("expected listen address to be set, got %q", loaded.ListenAddr)
 	}
-	if loaded.Mode != "random" {
+
+	if loaded.Mode != modeRandom {
 		t.Fatalf("expected mode random, got %q", loaded.Mode)
 	}
-	if len(loaded.RandomHeaders) != 1 || loaded.RandomHeaders[0] != "X-Test" {
+
+	if len(loaded.RandomHeaders) != 1 || loaded.RandomHeaders[0] != headerXTest {
 		t.Fatalf("expected random headers to inherit echo headers")
 	}
+
 	if loaded.RandomChance != 42 {
 		t.Fatalf("expected random chance 42, got %d", loaded.RandomChance)
 	}
+
 	if loaded.LogJSON {
 		t.Fatalf("expected log_json to be false")
 	}

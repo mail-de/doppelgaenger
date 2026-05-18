@@ -8,6 +8,9 @@ import (
 	"doppelgaenger/internal/headers"
 )
 
+const protocolHTTP = "http"
+
+// HTTPAdapter opens HTTP sessions against primary and shadow backends.
 type HTTPAdapter struct {
 	PrimaryRequester      backend.Requester
 	ShadowRequester       backend.Requester
@@ -15,25 +18,32 @@ type HTTPAdapter struct {
 	ShadowRequestHeaders  map[string]string
 }
 
+// Protocol reports the adapter protocol name.
 func (a HTTPAdapter) Protocol() string {
-	return "http"
+	return protocolHTTP
 }
 
+// NewSession creates a new HTTP backend session for the requested target.
 func (a HTTPAdapter) NewSession(ctx context.Context, target Target) (TestSession, error) {
-	var kind backend.BackendKind
-	var requester backend.Requester
-	var configuredRequestHeaders map[string]string
-	if target == TargetPrimary {
+	var (
+		kind                     backend.Kind
+		requester                backend.Requester
+		configuredRequestHeaders map[string]string
+	)
+
+	switch target {
+	case TargetPrimary:
 		kind = backend.BackendPrimary
 		requester = a.PrimaryRequester
 		configuredRequestHeaders = a.PrimaryRequestHeaders
-	} else if target == TargetShadow {
+	case TargetShadow:
 		kind = backend.BackendShadow
 		requester = a.ShadowRequester
 		configuredRequestHeaders = a.ShadowRequestHeaders
-	} else {
+	default:
 		return nil, errors.New("unknown target")
 	}
+
 	if requester == nil {
 		return nil, errors.New("missing backend requester")
 	}
@@ -44,8 +54,8 @@ func (a HTTPAdapter) NewSession(ctx context.Context, target Target) (TestSession
 type httpSession struct {
 	requester                backend.Requester
 	ctx                      context.Context
-	kind                     backend.BackendKind
-	result                   *backend.BackendResult
+	kind                     backend.Kind
+	result                   *backend.Result
 	configuredRequestHeaders map[string]string
 }
 
@@ -58,13 +68,16 @@ func (s *httpSession) Send(event Event) error {
 	if s.kind == backend.BackendPrimary && event.PrimaryPath != "" {
 		path = event.PrimaryPath
 	}
+
 	if s.kind == backend.BackendShadow && event.ShadowPath != "" {
 		path = event.ShadowPath
 	}
+
 	headersToSend := headers.Clone(event.Header)
 	for name, value := range s.configuredRequestHeaders {
 		headersToSend.Set(name, value)
 	}
+
 	item := backend.Request{
 		Kind:       s.kind,
 		Method:     event.Method,
@@ -89,6 +102,7 @@ func (s *httpSession) Receive() (Response, error) {
 	}
 
 	res := *s.result
+
 	return Response{
 		Proto:    res.Proto,
 		Selected: res.Selected,

@@ -6,12 +6,14 @@ import (
 	"io"
 )
 
+// MilterFrame contains one decoded Milter frame.
 type MilterFrame struct {
 	Command byte
 	Payload []byte
 	Raw     []byte
 }
 
+// ReadFrame reads and decodes one Milter frame from reader.
 func ReadFrame(reader io.Reader) (MilterFrame, error) {
 	return readMilterFrame(reader)
 }
@@ -37,6 +39,7 @@ func readMilterFrame(reader io.Reader) (MilterFrame, error) {
 		Payload: payload[1:],
 	}
 	frame.Raw = encodeMilterFrame(frame.Command, frame.Payload)
+
 	return frame, nil
 }
 
@@ -46,5 +49,6 @@ func encodeMilterFrame(command byte, payload []byte) []byte {
 	binary.BigEndian.PutUint32(buffer[:4], uint32(frameLen))
 	buffer[4] = command
 	copy(buffer[5:], payload)
+
 	return buffer
 }

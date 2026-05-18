@@ -7,16 +7,18 @@ import (
 	"doppelgaenger/internal/compare"
 )
 
+// HTTPComparator compares HTTP responses with the configured HTTP comparator.
 type HTTPComparator struct {
 	Comparator compare.Comparator
 }
 
+// Compare converts protocol responses into backend results and compares them.
 func (c HTTPComparator) Compare(primary, shadow Response) (CompareResult, error) {
 	if c.Comparator == nil {
 		return CompareResult{}, errors.New("missing http comparator")
 	}
 
-	primaryResult := backend.BackendResult{
+	primaryResult := backend.Result{
 		Header:   primary.Header,
 		Body:     primary.Body,
 		Err:      primary.Err,
@@ -24,7 +26,7 @@ func (c HTTPComparator) Compare(primary, shadow Response) (CompareResult, error)
 		Duration: primary.Duration,
 		Status:   primary.Status,
 	}
-	shadowResult := backend.BackendResult{
+	shadowResult := backend.Result{
 		Header:   shadow.Header,
 		Body:     shadow.Body,
 		Err:      shadow.Err,
@@ -34,6 +36,7 @@ func (c HTTPComparator) Compare(primary, shadow Response) (CompareResult, error)
 	}
 
 	result, err := c.Comparator.Compare(primaryResult, shadowResult)
+
 	return CompareResult{
 		Mode:           result.Mode,
 		Diff:           result.Diff,

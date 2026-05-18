@@ -1,3 +1,4 @@
+// Package headers contains helpers for copying and comparing HTTP headers.
 package headers
 
 import (
@@ -41,8 +42,10 @@ func CompareDetailed(primary http.Header, shadow http.Header, keys []string, inc
 
 		p[ck] = pv
 		s[ck] = sv
+
 		if pv != sv {
 			diff = true
+
 			diffs = append(diffs, HeaderDiff{Key: ck, Primary: pv, Shadow: sv})
 		}
 	}
@@ -64,6 +67,7 @@ func WriteSelected(w http.ResponseWriter, src http.Header, allow []string) {
 		}
 
 		w.Header().Del(ck)
+
 		for _, v := range vv {
 			w.Header().Add(ck, v)
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 )
 
+// ErrString normalizes an error into a log-friendly string.
 func ErrString(err error) string {
 	if err == nil {
 		return ""

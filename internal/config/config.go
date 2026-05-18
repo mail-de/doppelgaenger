@@ -1,18 +1,43 @@
+// Package config loads and validates Doppelgaenger configuration.
 package config
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"reflect"
 	"strings"
 	"time"
 
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 
 	"doppelgaenger/internal/mapping"
+)
+
+const (
+	protocolHTTP   = "http"
+	protocolMilter = "milter"
+
+	compareModeNginx  = "nginx"
+	compareModeHeader = "header"
+	compareModeJSON   = "json"
+	compareModeHTML   = "html"
+
+	selectionRoundRobin   = "round_robin"
+	selectionSourceIPHash = "source_ip_hash"
+
+	headerAuthStatus       = "Auth-Status"
+	headerAuthServer       = "Auth-Server"
+	headerAuthPort         = "Auth-Port"
+	headerAuthUser         = "Auth-User"
+	headerAuthError        = "Auth-Error"
+	headerNauthilusSession = "X-Nauthilus-Session"
 )
 
 // Config holds all configuration settings for the proxy.
@@ -163,6 +188,38 @@ type Config struct {
 	// PathMapping controls how incoming request paths are mapped to backends.
 	// Applies to: HTTP protocol.
 	PathMapping mapping.Config `mapstructure:"path_mapping"`
+
+	// Observability controls optional OpenMetrics and OpenTelemetry exporters.
+	Observability ObservabilityConfig `mapstructure:"observability"`
+}
+
+// ObservabilityConfig contains all opt-in metrics and tracing settings.
+type ObservabilityConfig struct {
+	PrometheusEnabled        bool              `mapstructure:"prometheus_enabled"`
+	PrometheusAddress        string            `mapstructure:"prometheus_address"`
+	PrometheusPort           int               `mapstructure:"prometheus_port"`
+	PrometheusPath           string            `mapstructure:"prometheus_path"`
+	PrometheusRuntimeMetrics bool              `mapstructure:"prometheus_runtime_metrics"`
+	PrometheusHTTPAuthBasic  string            `mapstructure:"prometheus_http_auth_basic"`
+	PrometheusTLS            PrometheusTLS     `mapstructure:"prometheus_tls"`
+	OTelEnabled              bool              `mapstructure:"otel_enabled"`
+	OTelTracesEnabled        bool              `mapstructure:"otel_traces_enabled"`
+	OTelMetricsEnabled       bool              `mapstructure:"otel_metrics_enabled"`
+	OTelServiceName          string            `mapstructure:"otel_service_name"`
+	OTelServiceVersion       string            `mapstructure:"otel_service_version"`
+	OTLPEndpoint             string            `mapstructure:"otel_exporter_otlp_endpoint"`
+	OTLPHeaders              map[string]string `mapstructure:"otel_exporter_otlp_headers"`
+	OTLPInsecure             bool              `mapstructure:"otel_exporter_otlp_insecure"`
+	OTelSampleRatio          *float64          `mapstructure:"otel_sample_ratio"`
+	TraceIDHeader            string            `mapstructure:"trace_id_header"`
+}
+
+// PrometheusTLS configures server-side TLS for the optional Prometheus endpoint.
+type PrometheusTLS struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	Cert       string `mapstructure:"cert"`
+	Key        string `mapstructure:"key"`
+	MinVersion string `mapstructure:"min_tls_version"`
 }
 
 // UseJSONLogger reports whether the JSON logger is enabled.
@@ -173,6 +230,7 @@ func (c Config) UseJSONLogger() bool {
 // Load loads the configuration from a YAML file using Viper.
 func Load() (Config, error) {
 	v := viper.New()
+
 	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
 	if configFile != "" {
 		v.SetConfigFile(configFile)
@@ -184,11 +242,13 @@ func Load() (Config, error) {
 	}
 
 	setDefaults(v)
+
 	if err := v.ReadInConfig(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
 	var cfg Config
+
 	decodeHook := mapstructure.ComposeDecodeHookFunc(
 		mapstructure.StringToTimeDurationHookFunc(),
 		decodeURLHook(),
@@ -205,18 +265,28 @@ func Load() (Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("protocol", "http")
+	setProtocolDefaults(v)
+	setHTTPDefaults(v)
+	setMilterDefaults(v)
+	setCompareDefaults(v)
+	setRuntimeDefaults(v)
+	setHeaderDefaults(v)
+	setPathMappingDefaults(v)
+	setObservabilityDefaults(v)
+}
+
+func setProtocolDefaults(v *viper.Viper) {
+	v.SetDefault("protocol", protocolHTTP)
+}
+
+func setHTTPDefaults(v *viper.Viper) {
 	v.SetDefault("listen_addr", ":8080")
 	v.SetDefault("tls_cert_file", "")
 	v.SetDefault("tls_key_file", "")
-	v.SetDefault("milter_listen_addr", ":9999")
-	v.SetDefault("primary_milter_addr", "127.0.0.1:9997")
-	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
-	v.SetDefault("milter_timeout", 2*time.Second)
 	v.SetDefault("primary_base_urls", []string{"https://127.0.0.1:9001"})
-	v.SetDefault("primary_selection_mode", "round_robin")
+	v.SetDefault("primary_selection_mode", selectionRoundRobin)
 	v.SetDefault("shadow_base_urls", []string{"https://127.0.0.1:9002"})
-	v.SetDefault("shadow_selection_mode", "round_robin")
+	v.SetDefault("shadow_selection_mode", selectionRoundRobin)
 	v.SetDefault("shadow_timeout", 150*time.Millisecond)
 	v.SetDefault("shadow_sample_percent", 5)
 	v.SetDefault("shadow_force_header", "X-Shadow")
@@ -224,11 +294,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shadow_request_headers", map[string]string{})
 	v.SetDefault("shadow_rps", 200.0)
 	v.SetDefault("shadow_burst", 400)
-	v.SetDefault("compare_mode", "nginx")
-	v.SetDefault("compare_json_strict", false)
-	v.SetDefault("compare_html_threshold", 0.99)
-	v.SetDefault("log_session_only_on_diff", true)
-	v.SetDefault("log_json", true)
 	v.SetDefault("max_backend_body_bytes", 32*1024)
 	v.SetDefault("upstream_http_dial_timeout", 2*time.Second)
 	v.SetDefault("upstream_http_tls_handshake_timeout", 5*time.Second)
@@ -236,6 +301,24 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("upstream_http_max_idle_conns", 1024)
 	v.SetDefault("upstream_http_max_idle_conns_per_host", 256)
 	v.SetDefault("upstream_http_max_conns_per_host", 0)
+}
+
+func setMilterDefaults(v *viper.Viper) {
+	v.SetDefault("milter_listen_addr", ":9999")
+	v.SetDefault("primary_milter_addr", "127.0.0.1:9997")
+	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
+	v.SetDefault("milter_timeout", 2*time.Second)
+}
+
+func setCompareDefaults(v *viper.Viper) {
+	v.SetDefault("compare_mode", compareModeNginx)
+	v.SetDefault("compare_json_strict", false)
+	v.SetDefault("compare_html_threshold", 0.99)
+	v.SetDefault("log_session_only_on_diff", true)
+}
+
+func setRuntimeDefaults(v *viper.Viper) {
+	v.SetDefault("log_json", true)
 	v.SetDefault("root_ca", "")
 	v.SetDefault("primary_root_ca", "")
 	v.SetDefault("shadow_root_ca", "")
@@ -243,105 +326,321 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("run_as_user", "")
 	v.SetDefault("run_as_group", "")
 	v.SetDefault("chroot", "")
+}
+
+func setHeaderDefaults(v *viper.Viper) {
 	v.SetDefault("forward_response_headers", []string{
-		"Auth-Status",
-		"Auth-Server",
-		"Auth-Port",
-		"Auth-User",
+		headerAuthStatus,
+		headerAuthServer,
+		headerAuthPort,
+		headerAuthUser,
 		"Auth-Pass",
-		"Auth-Error",
+		headerAuthError,
 		"Auth-Wait",
 		"Auth-Protocol",
-		"X-Nauthilus-Session",
+		headerNauthilusSession,
 	})
 	v.SetDefault("compare_headers", []string{
-		"Auth-Status",
-		"Auth-Server",
-		"Auth-Port",
-		"Auth-User",
-		"Auth-Error",
-		"X-Nauthilus-Session",
+		headerAuthStatus,
+		headerAuthServer,
+		headerAuthPort,
+		headerAuthUser,
+		headerAuthError,
+		headerNauthilusSession,
 	})
+}
+
+func setPathMappingDefaults(v *viper.Viper) {
 	v.SetDefault("path_mapping", mapping.Config{
 		Mode:  "direct",
 		Rules: []mapping.Rule{},
 	})
 }
 
+func setObservabilityDefaults(v *viper.Viper) {
+	v.SetDefault("observability.prometheus_enabled", false)
+	v.SetDefault("observability.prometheus_address", "127.0.0.1")
+	v.SetDefault("observability.prometheus_port", 9464)
+	v.SetDefault("observability.prometheus_path", "/metrics")
+	v.SetDefault("observability.prometheus_runtime_metrics", false)
+	v.SetDefault("observability.prometheus_http_auth_basic", "")
+	v.SetDefault("observability.prometheus_tls.enabled", false)
+	v.SetDefault("observability.prometheus_tls.cert", "")
+	v.SetDefault("observability.prometheus_tls.key", "")
+	v.SetDefault("observability.prometheus_tls.min_tls_version", "1.2")
+	v.SetDefault("observability.otel_enabled", false)
+	v.SetDefault("observability.otel_traces_enabled", false)
+	v.SetDefault("observability.otel_metrics_enabled", false)
+	v.SetDefault("observability.otel_service_name", "doppelgaenger")
+	v.SetDefault("observability.otel_service_version", "")
+	v.SetDefault("observability.otel_exporter_otlp_endpoint", "")
+	v.SetDefault("observability.otel_exporter_otlp_headers", map[string]string{})
+	v.SetDefault("observability.otel_exporter_otlp_insecure", false)
+	v.SetDefault("observability.otel_sample_ratio", 1.0)
+	v.SetDefault("observability.trace_id_header", "X-Trace-ID")
+}
+
 func validate(cfg *Config) error {
-	protocol := strings.ToLower(strings.TrimSpace(cfg.Protocol))
-	if protocol == "" {
-		protocol = "http"
-	}
-	if protocol != "http" && protocol != "milter" {
-		return fmt.Errorf("invalid protocol: %s", cfg.Protocol)
-	}
-	cfg.Protocol = protocol
-
-	if cfg.Protocol == "http" && len(cfg.PrimaryBaseURLs) == 0 {
-		return errors.New("at least one primary backend must be configured via primary_base_urls")
+	if err := normalizeProtocol(cfg); err != nil {
+		return err
 	}
 
-	if cfg.Protocol == "http" && len(cfg.ShadowBaseURLs) == 0 {
-		return errors.New("at least one shadow backend must be configured via shadow_base_urls")
+	if err := validateBackendLists(*cfg); err != nil {
+		return err
 	}
 
 	cfg.PrimarySelectionMode = normalizeSelectionMode(cfg.PrimarySelectionMode)
 	cfg.ShadowSelectionMode = normalizeSelectionMode(cfg.ShadowSelectionMode)
 
+	normalizeShadowConfig(cfg)
+	normalizeHTTPTransportConfig(cfg)
+	normalizeCompareConfig(cfg)
+	normalizeRuntimeConfig(cfg)
+
+	return validateObservabilityConfig(&cfg.Observability)
+}
+
+func normalizeProtocol(cfg *Config) error {
+	protocol := strings.ToLower(strings.TrimSpace(cfg.Protocol))
+	if protocol == "" {
+		protocol = protocolHTTP
+	}
+
+	if protocol != protocolHTTP && protocol != protocolMilter {
+		return fmt.Errorf("invalid protocol: %s", cfg.Protocol)
+	}
+
+	cfg.Protocol = protocol
+
+	return nil
+}
+
+func validateBackendLists(cfg Config) error {
+	if cfg.Protocol != protocolHTTP {
+		return nil
+	}
+
+	if len(cfg.PrimaryBaseURLs) == 0 {
+		return errors.New("at least one primary backend must be configured via primary_base_urls")
+	}
+
+	if len(cfg.ShadowBaseURLs) == 0 {
+		return errors.New("at least one shadow backend must be configured via shadow_base_urls")
+	}
+
+	return nil
+}
+
+func normalizeShadowConfig(cfg *Config) {
 	if cfg.ShadowSamplePercent < 0 {
 		cfg.ShadowSamplePercent = 0
 	}
+
 	if cfg.ShadowSamplePercent > 100 {
 		cfg.ShadowSamplePercent = 100
 	}
+
 	if cfg.ShadowBurst < 1 && cfg.ShadowRPS > 0 {
 		cfg.ShadowBurst = 1
 	}
+}
+
+func normalizeHTTPTransportConfig(cfg *Config) {
 	if cfg.UpstreamHTTPDialTimeout <= 0 {
 		cfg.UpstreamHTTPDialTimeout = 2 * time.Second
 	}
+
 	if cfg.UpstreamHTTPTLSHandshakeTimeout <= 0 {
 		cfg.UpstreamHTTPTLSHandshakeTimeout = 5 * time.Second
 	}
+
 	if cfg.UpstreamHTTPResponseHeaderTimeout <= 0 {
 		cfg.UpstreamHTTPResponseHeaderTimeout = 5 * time.Second
 	}
+
 	if cfg.UpstreamHTTPMaxIdleConns <= 0 {
 		cfg.UpstreamHTTPMaxIdleConns = 1024
 	}
+
 	if cfg.UpstreamHTTPMaxIdleConnsPerHost <= 0 {
 		cfg.UpstreamHTTPMaxIdleConnsPerHost = 256
 	}
+
 	if cfg.UpstreamHTTPMaxConnsPerHost < 0 {
 		cfg.UpstreamHTTPMaxConnsPerHost = 0
 	}
+}
 
+func normalizeCompareConfig(cfg *Config) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))
 	switch mode {
-	case "", "nginx", "header", "json", "html":
+	case "", compareModeNginx, compareModeHeader, compareModeJSON, compareModeHTML:
 		if mode == "" {
-			mode = "nginx"
+			mode = compareModeNginx
 		}
 	case "nxinx":
-		mode = "nginx"
+		mode = compareModeNginx
 	default:
-		mode = "nginx"
+		mode = compareModeNginx
 	}
+
 	cfg.CompareMode = mode
 
 	if cfg.HTMLSimilarityThreshold < 0 {
 		cfg.HTMLSimilarityThreshold = 0
 	}
+
 	if cfg.HTMLSimilarityThreshold > 1 {
 		cfg.HTMLSimilarityThreshold = 1
 	}
+}
 
+func normalizeRuntimeConfig(cfg *Config) {
 	cfg.RunAsUser = strings.TrimSpace(cfg.RunAsUser)
 	cfg.RunAsGroup = strings.TrimSpace(cfg.RunAsGroup)
 	cfg.ChrootDir = strings.TrimSpace(cfg.ChrootDir)
+}
+
+func validateObservabilityConfig(cfg *ObservabilityConfig) error {
+	normalizeObservabilityConfig(cfg)
+
+	if err := validatePrometheusConfig(*cfg); err != nil {
+		return err
+	}
+
+	if err := validateOTelConfig(*cfg); err != nil {
+		return err
+	}
+
+	if err := validateTraceIDHeader(cfg); err != nil {
+		return err
+	}
+
+	if cfg.OTLPHeaders == nil {
+		cfg.OTLPHeaders = map[string]string{}
+	}
 
 	return nil
+}
+
+func normalizeObservabilityConfig(cfg *ObservabilityConfig) {
+	cfg.PrometheusAddress = strings.TrimSpace(cfg.PrometheusAddress)
+	cfg.PrometheusPath = strings.TrimSpace(cfg.PrometheusPath)
+	cfg.PrometheusHTTPAuthBasic = strings.TrimSpace(cfg.PrometheusHTTPAuthBasic)
+	cfg.PrometheusTLS.Cert = strings.TrimSpace(cfg.PrometheusTLS.Cert)
+	cfg.PrometheusTLS.Key = strings.TrimSpace(cfg.PrometheusTLS.Key)
+	cfg.PrometheusTLS.MinVersion = strings.TrimSpace(cfg.PrometheusTLS.MinVersion)
+	cfg.OTelServiceName = strings.TrimSpace(cfg.OTelServiceName)
+	cfg.OTelServiceVersion = strings.TrimSpace(cfg.OTelServiceVersion)
+	cfg.OTLPEndpoint = strings.TrimSpace(cfg.OTLPEndpoint)
+	cfg.TraceIDHeader = strings.TrimSpace(cfg.TraceIDHeader)
+}
+
+func validatePrometheusConfig(cfg ObservabilityConfig) error {
+	if !cfg.PrometheusEnabled {
+		return nil
+	}
+
+	if cfg.PrometheusAddress == "" {
+		return errors.New("observability prometheus_address must not be empty when prometheus_enabled is true")
+	}
+
+	if cfg.PrometheusPort < 1 || cfg.PrometheusPort > 65535 {
+		return errors.New("observability prometheus_port must be between 1 and 65535")
+	}
+
+	if !strings.HasPrefix(cfg.PrometheusPath, "/") {
+		return errors.New("observability prometheus_path must start with '/'")
+	}
+
+	if cfg.PrometheusHTTPAuthBasic != "" {
+		if _, _, err := SplitBasicAuthCredentials(cfg.PrometheusHTTPAuthBasic); err != nil {
+			return fmt.Errorf("observability prometheus_http_auth_basic %w", err)
+		}
+	}
+
+	return validatePrometheusTLS(cfg.PrometheusTLS)
+}
+
+func validatePrometheusTLS(cfg PrometheusTLS) error {
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if cfg.Cert == "" || cfg.Key == "" {
+		return errors.New("observability prometheus_tls requires cert and key when enabled")
+	}
+
+	if _, err := ResolveTLSMinVersion(cfg.MinVersion); err != nil {
+		return fmt.Errorf("observability prometheus_tls: %w", err)
+	}
+
+	return nil
+}
+
+func validateOTelConfig(cfg ObservabilityConfig) error {
+	if ratio := defaultedOTelSampleRatio(cfg); ratio < 0 || ratio > 1 {
+		return errors.New("observability otel_sample_ratio must be between 0.0 and 1.0")
+	}
+
+	if !cfg.OTelEnabled {
+		return nil
+	}
+
+	if !cfg.OTelTracesEnabled && !cfg.OTelMetricsEnabled {
+		return errors.New("observability otel_enabled requires otel_traces_enabled or otel_metrics_enabled")
+	}
+
+	if cfg.OTLPEndpoint == "" {
+		return errors.New("observability otel_exporter_otlp_endpoint is required when otel_enabled is true")
+	}
+
+	return nil
+}
+
+func validateTraceIDHeader(cfg *ObservabilityConfig) error {
+	if cfg.TraceIDHeader == "" {
+		return nil
+	}
+
+	canonical := http.CanonicalHeaderKey(cfg.TraceIDHeader)
+	if canonical == "" || !httpguts.ValidHeaderFieldName(canonical) {
+		return errors.New("observability trace_id_header must be a valid HTTP header name")
+	}
+
+	cfg.TraceIDHeader = canonical
+
+	return nil
+}
+
+func defaultedOTelSampleRatio(cfg ObservabilityConfig) float64 {
+	if cfg.OTelSampleRatio == nil {
+		return 1.0
+	}
+
+	return *cfg.OTelSampleRatio
+}
+
+// SplitBasicAuthCredentials validates and separates the user:password form used for Basic auth.
+func SplitBasicAuthCredentials(credentials string) (string, string, error) {
+	username, password, ok := strings.Cut(credentials, ":")
+	if !ok || username == "" || password == "" {
+		return "", "", errors.New("must use non-empty user:password credentials")
+	}
+
+	return username, password, nil
+}
+
+// ResolveTLSMinVersion converts a config value into a crypto/tls version constant.
+func ResolveTLSMinVersion(value string) (uint16, error) {
+	switch value {
+	case "", "1.2":
+		return tls.VersionTLS12, nil
+	case "1.3":
+		return tls.VersionTLS13, nil
+	default:
+		return 0, fmt.Errorf("unsupported min_tls_version %q (allowed: 1.2, 1.3)", value)
+	}
 }
 
 // parseURL parses a string as a URL and ensures that scheme and host are present.
@@ -363,9 +662,11 @@ func decodeURLHook() mapstructure.DecodeHookFuncType {
 		if from.Kind() != reflect.String {
 			return data, nil
 		}
+
 		if to != reflect.TypeOf(&url.URL{}) {
 			return data, nil
 		}
+
 		return parseURL(data.(string))
 	}
 }
@@ -373,12 +674,13 @@ func decodeURLHook() mapstructure.DecodeHookFuncType {
 func normalizeSelectionMode(mode string) string {
 	normalized := strings.ToLower(strings.TrimSpace(mode))
 	switch normalized {
-	case "", "round_robin", "source_ip_hash":
+	case "", selectionRoundRobin, selectionSourceIPHash:
 		if normalized == "" {
-			return "round_robin"
+			return selectionRoundRobin
 		}
+
 		return normalized
 	default:
-		return "round_robin"
+		return selectionRoundRobin
 	}
 }

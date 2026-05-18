@@ -1,3 +1,4 @@
+// Package mapping maps incoming request paths to primary and shadow backend paths.
 package mapping
 
 import (
@@ -5,6 +6,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+)
+
+const (
+	modeDirect  = "direct"
+	modeRewrite = "rewrite"
 )
 
 // Config describes the path mapping configuration.
@@ -49,13 +55,13 @@ type compiledRule struct {
 func NewPathMapper(cfg Config) (PathMapper, error) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode == "" {
-		mode = "direct"
+		mode = modeDirect
 	}
 
 	switch mode {
-	case "direct":
+	case modeDirect:
 		return DirectMapper{}, nil
-	case "rewrite":
+	case modeRewrite:
 		return newRegexMapper(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported path mapping mode: %s", cfg.Mode)
@@ -68,16 +74,19 @@ func newRegexMapper(cfg Config) (PathMapper, error) {
 		if strings.TrimSpace(rule.Match) == "" {
 			return nil, errors.New("path mapping rule match is required")
 		}
+
 		pattern, err := regexp.Compile(rule.Match)
 		if err != nil {
 			return nil, fmt.Errorf("invalid path mapping rule regex: %w", err)
 		}
+
 		compiled = append(compiled, compiledRule{
 			pattern: pattern,
 			primary: rule.Primary,
 			shadow:  rule.Shadow,
 		})
 	}
+
 	return RegexMapper{rules: compiled}, nil
 }
 
@@ -85,17 +94,22 @@ func newRegexMapper(cfg Config) (PathMapper, error) {
 func (m RegexMapper) Map(path string) (string, string, error) {
 	primary := path
 	shadow := path
+
 	for _, rule := range m.rules {
 		if !rule.pattern.MatchString(path) {
 			continue
 		}
+
 		if rule.primary != "" {
 			primary = rule.pattern.ReplaceAllString(path, rule.primary)
 		}
+
 		if rule.shadow != "" {
 			shadow = rule.pattern.ReplaceAllString(path, rule.shadow)
 		}
+
 		break
 	}
+
 	return primary, shadow, nil
 }

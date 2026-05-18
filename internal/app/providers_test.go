@@ -10,6 +10,7 @@ import (
 
 func TestNewHandlerJSON(t *testing.T) {
 	var buf bytes.Buffer
+
 	logger := slog.New(newHandler(&buf, true))
 
 	logger.Info("hello", "key", "value")
@@ -22,6 +23,7 @@ func TestNewHandlerJSON(t *testing.T) {
 	if payload["msg"] != "hello" {
 		t.Fatalf("expected msg to be logged, got %v", payload["msg"])
 	}
+
 	if payload["key"] != "value" {
 		t.Fatalf("expected key to be logged, got %v", payload["key"])
 	}
@@ -29,6 +31,7 @@ func TestNewHandlerJSON(t *testing.T) {
 
 func TestNewHandlerText(t *testing.T) {
 	var buf bytes.Buffer
+
 	logger := slog.New(newHandler(&buf, false))
 
 	logger.Info("hello", "key", "value")
@@ -37,6 +40,7 @@ func TestNewHandlerText(t *testing.T) {
 	if !strings.Contains(output, "msg=hello") {
 		t.Fatalf("expected text output to contain msg, got %q", output)
 	}
+
 	if !strings.Contains(output, "key=value") {
 		t.Fatalf("expected text output to contain key, got %q", output)
 	}

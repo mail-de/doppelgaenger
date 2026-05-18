@@ -13,6 +13,7 @@ import (
 
 func TestApplyRuntimeSecuritySkipsWhenAlreadyApplied(t *testing.T) {
 	t.Setenv(runtimeSecurityAppliedEnv, "1")
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	// Intentionally use a non-existing user/group. If skip does not work,

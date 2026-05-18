@@ -36,8 +36,10 @@ func RegisterHooks(lc fx.Lifecycle, cfg Config, srv *http.Server, logger *slog.L
 				} else {
 					err = srv.ListenAndServe()
 				}
+
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					logger.Error("server failed", "err", err)
+
 					_ = shutdowner.Shutdown()
 				}
 			}()
@@ -47,6 +49,7 @@ func RegisterHooks(lc fx.Lifecycle, cfg Config, srv *http.Server, logger *slog.L
 		OnStop: func(ctx context.Context) error {
 			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
+
 			return srv.Shutdown(shutdownCtx)
 		},
 	})

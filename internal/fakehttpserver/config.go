@@ -1,3 +1,4 @@
+// Package fakehttpserver provides the optional fake backend server.
 package fakehttpserver
 
 import (
@@ -7,6 +8,14 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+)
+
+const (
+	modeEcho   = "echo"
+	modeRandom = "random"
+
+	randomDefaultValue = "random"
+	headerXTest        = "X-Test"
 )
 
 // Config holds configuration settings for the fake server.
@@ -50,6 +59,7 @@ var defaultEchoHeaders = []string{
 // Load loads the configuration from a YAML file using Viper.
 func Load() (Config, error) {
 	v := viper.New()
+
 	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
 	if configFile != "" {
 		v.SetConfigFile(configFile)
@@ -61,6 +71,7 @@ func Load() (Config, error) {
 	}
 
 	setDefaults(v)
+
 	if err := v.ReadInConfig(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
@@ -69,9 +80,11 @@ func Load() (Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
+
 	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
+
 	return cfg, nil
 }
 
@@ -79,35 +92,39 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("listen_addr", ":9001")
 	v.SetDefault("tls_cert_file", "")
 	v.SetDefault("tls_key_file", "")
-	v.SetDefault("mode", "echo")
+	v.SetDefault("mode", modeEcho)
 	v.SetDefault("echo_headers", defaultEchoHeaders)
 	v.SetDefault("response_headers", map[string]string{})
 	v.SetDefault("random_chance", 10)
 	v.SetDefault("random_headers", []string{})
-	v.SetDefault("random_values", []string{"random"})
+	v.SetDefault("random_values", []string{randomDefaultValue})
 	v.SetDefault("log_json", true)
 }
 
 func validate(cfg *Config) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
-	if mode != "echo" && mode != "random" {
+	if mode != modeEcho && mode != modeRandom {
 		return fmt.Errorf("invalid mode: %s", cfg.Mode)
 	}
+
 	cfg.Mode = mode
 
 	if len(cfg.EchoHeaders) == 0 {
 		cfg.EchoHeaders = append([]string(nil), defaultEchoHeaders...)
 	}
+
 	if len(cfg.RandomHeaders) == 0 {
 		cfg.RandomHeaders = append([]string(nil), cfg.EchoHeaders...)
 	}
+
 	if len(cfg.RandomValues) == 0 {
-		cfg.RandomValues = []string{"random"}
+		cfg.RandomValues = []string{randomDefaultValue}
 	}
 
 	if cfg.RandomChance < 0 {
 		cfg.RandomChance = 0
 	}
+
 	if cfg.RandomChance > 100 {
 		cfg.RandomChance = 100
 	}

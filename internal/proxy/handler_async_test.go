@@ -17,6 +17,15 @@ import (
 	"doppelgaenger/internal/protocol"
 )
 
+const (
+	testHTTPProto     = "HTTP/1.1"
+	testAuthStatus    = "Auth-Status"
+	testAuthPath      = "/auth"
+	testPathParamKey  = "path"
+	testShadowTarget  = "shadow"
+	testPrimaryTarget = "primary"
+)
+
 type shadowOutcome struct {
 	canceled bool
 }
@@ -27,7 +36,7 @@ type asyncTestAdapter struct {
 }
 
 func (a *asyncTestAdapter) Protocol() string {
-	return "http"
+	return protocolHTTP
 }
 
 func (a *asyncTestAdapter) NewSession(ctx context.Context, target protocol.Target) (protocol.TestSession, error) {
@@ -57,20 +66,22 @@ func (s *asyncTestSession) Receive() (protocol.Response, error) {
 			if s.shadowDone != nil {
 				s.shadowDone <- shadowOutcome{canceled: false}
 			}
-			return protocol.Response{Status: 204, Proto: "HTTP/1.1", Selected: "shadow"}, nil
+
+			return protocol.Response{Status: 204, Proto: testHTTPProto, Selected: testShadowTarget}, nil
 		case <-s.ctx.Done():
 			if s.shadowDone != nil {
 				s.shadowDone <- shadowOutcome{canceled: true}
 			}
-			return protocol.Response{Err: s.ctx.Err(), Selected: "shadow"}, s.ctx.Err()
+
+			return protocol.Response{Err: s.ctx.Err(), Selected: testShadowTarget}, s.ctx.Err()
 		}
 	}
 
 	return protocol.Response{
 		Status:   200,
-		Proto:    "HTTP/1.1",
-		Selected: "primary",
-		Header:   http.Header{"Auth-Status": []string{"OK"}},
+		Proto:    testHTTPProto,
+		Selected: testPrimaryTarget,
+		Header:   http.Header{testAuthStatus: []string{"OK"}},
 		Body:     []byte("ok"),
 	}, nil
 }
@@ -79,12 +90,12 @@ func (s *asyncTestSession) Close() error {
 	return nil
 }
 
-func newAsyncTestHandler(adapter protocol.ProtocolAdapter, timeout time.Duration) *Handler {
+func newAsyncTestHandler(adapter protocol.Adapter, timeout time.Duration) *Handler {
 	return &Handler{
 		cfg: config.Config{
 			ShadowSamplePercent:    100,
 			ShadowTimeout:          timeout,
-			ForwardResponseHeaders: []string{"Auth-Status"},
+			ForwardResponseHeaders: []string{testAuthStatus},
 			CompareMode:            "nginx",
 		},
 		adapter:    adapter,
@@ -106,17 +117,20 @@ func TestHandleReturnsBeforeShadowCompletes(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	req := httptest.NewRequest(http.MethodGet, "/auth", nil)
+	req := httptest.NewRequest(http.MethodGet, testAuthPath, nil)
 	c.Request = req
-	c.Params = gin.Params{{Key: "path", Value: "/auth"}}
+	c.Params = gin.Params{{Key: testPathParamKey, Value: testAuthPath}}
 
 	start := time.Now()
+
 	handler.Handle(c)
+
 	elapsed := time.Since(start)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
+
 	if elapsed >= 80*time.Millisecond {
 		t.Fatalf("expected response to return before shadow finished, got %s", elapsed)
 	}
@@ -145,9 +159,9 @@ func TestHandleShadowIsDetachedFromRequestContext(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	req := httptest.NewRequest(http.MethodGet, "/auth", nil).WithContext(reqCtx)
+	req := httptest.NewRequest(http.MethodGet, testAuthPath, nil).WithContext(reqCtx)
 	c.Request = req
-	c.Params = gin.Params{{Key: "path", Value: "/auth"}}
+	c.Params = gin.Params{{Key: testPathParamKey, Value: testAuthPath}}
 
 	handler.Handle(c)
 	cancelReq()

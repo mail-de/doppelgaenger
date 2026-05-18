@@ -1,3 +1,4 @@
+// Package ratelimit provides simple request rate limiting primitives.
 package ratelimit
 
 import (

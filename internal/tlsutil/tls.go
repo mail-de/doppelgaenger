@@ -1,3 +1,4 @@
+// Package tlsutil builds TLS configuration for upstream connections.
 package tlsutil
 
 import (
