@@ -250,6 +250,17 @@ Incoming HTTP `traceparent` is extracted and continued. Outgoing HTTP requests t
 ### Prerequisites
 - Go 1.26.3 or later
 
+### Command-line Options
+```bash
+./doppelgaenger --config /path/to/config.yaml
+./doppelgaenger --version
+./doppelgaenger --help
+```
+
+- `--config`, `-c`: Uses the given YAML config file and takes precedence over `CONFIG_FILE`.
+- `--version`: Prints the build version injected by the Makefile or Docker build and exits.
+- `--help`, `-h`: Prints usage information.
+
 ### Build
 ```bash
 go build -o doppelgaenger main.go

@@ -2,12 +2,14 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
+	"github.com/spf13/pflag"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
@@ -22,28 +24,34 @@ import (
 
 var version = "dev"
 
+type cliOptions struct {
+	help       bool
+	version    bool
+	configPath string
+}
+
 func main() {
-	help := flag.Bool("help", false, "show help")
-	flag.BoolVar(help, "h", false, "show help")
+	opts, err := parseCLI(os.Args[1:], os.Stderr)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 
-	configPath := flag.String("config", "", "path to YAML config file")
-	flag.StringVar(configPath, "c", "", "path to YAML config file")
-	flag.Parse()
+		os.Exit(2)
+	}
 
-	if *help {
-		_, _ = fmt.Fprintf(os.Stdout, "Usage: %s [--help|-h] [--config|-c <path>]\n", os.Args[0])
-		_, _ = fmt.Fprintln(os.Stdout, "HTTP Shadow Proxy")
-		_, _ = fmt.Fprintln(os.Stdout, "Configuration lookup order:")
-		_, _ = fmt.Fprintln(os.Stdout, "  1) --config / -c")
-		_, _ = fmt.Fprintln(os.Stdout, "  2) CONFIG_FILE environment variable")
-		_, _ = fmt.Fprintln(os.Stdout, "  3) ./config.yaml")
-		_, _ = fmt.Fprintln(os.Stdout, "  4) /etc/doppelgaenger/config.yaml")
+	if opts.help {
+		printUsage(os.Stdout, os.Args[0])
 
 		return
 	}
 
-	if *configPath != "" {
-		if err := os.Setenv("CONFIG_FILE", *configPath); err != nil {
+	if opts.version {
+		printVersion(os.Stdout, version)
+
+		return
+	}
+
+	if opts.configPath != "" {
+		if err := os.Setenv("CONFIG_FILE", opts.configPath); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to set CONFIG_FILE: %v\n", err)
 			os.Exit(1)
 		}
@@ -79,4 +87,44 @@ func main() {
 		fx.Invoke(app.RegisterReloadHook),
 		fx.Invoke(app.ApplyRuntimeSecurity),
 	).Run()
+}
+
+func parseCLI(args []string, errorOutput io.Writer) (cliOptions, error) {
+	opts := cliOptions{}
+
+	flags := pflag.NewFlagSet("doppelgaenger", pflag.ContinueOnError)
+	flags.SetOutput(errorOutput)
+	flags.BoolVarP(&opts.help, "help", "h", false, "show help")
+	flags.StringVarP(&opts.configPath, "config", "c", "", "path to YAML config file")
+	flags.BoolVar(&opts.version, "version", false, "show version")
+
+	if err := flags.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+
+	if flags.NArg() > 0 {
+		return cliOptions{}, fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+
+	return opts, nil
+}
+
+func printVersion(w io.Writer, value string) {
+	_, _ = fmt.Fprintf(w, "doppelgaenger %s\n", value)
+}
+
+func printUsage(w io.Writer, name string) {
+	_, _ = fmt.Fprintf(w, "Usage: %s [--help|-h] [--version] [--config|-c <path>]\n", name)
+	_, _ = fmt.Fprintln(w, "HTTP Shadow Proxy")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Command-line options:")
+	_, _ = fmt.Fprintln(w, "  --config, -c <path>  Path to the YAML config file")
+	_, _ = fmt.Fprintln(w, "  --version           Print the build version and exit")
+	_, _ = fmt.Fprintln(w, "  --help, -h          Show this help")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Configuration lookup order:")
+	_, _ = fmt.Fprintln(w, "  1) --config / -c")
+	_, _ = fmt.Fprintln(w, "  2) CONFIG_FILE environment variable")
+	_, _ = fmt.Fprintln(w, "  3) ./config.yaml")
+	_, _ = fmt.Fprintln(w, "  4) /etc/doppelgaenger/config.yaml")
 }

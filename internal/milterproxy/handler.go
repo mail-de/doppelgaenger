@@ -21,7 +21,10 @@ import (
 	"doppelgaenger/internal/ratelimit"
 )
 
-const shadowNotStarted = "shadow_not_started"
+const (
+	shadowNotStarted  = "shadow_not_started"
+	milterMetaCommand = "command"
+)
 
 // Handler processes accepted Milter client connections.
 type Handler struct {
@@ -138,7 +141,7 @@ func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession
 		Payload:   frame.Raw,
 		RequestID: reqID,
 		Meta: map[string]string{
-			"command": command,
+			milterMetaCommand: command,
 		},
 	}
 
@@ -192,7 +195,16 @@ func (h *Handler) writePrimaryFrame(frameCtx context.Context, conn net.Conn, res
 	return true
 }
 
-func (h *Handler) logFrameResult(frameCtx context.Context, reqID uint64, traceID, command string, shadowEnabled bool, span trace.Span, frameStart time.Time, result protocol.RunResult) {
+func (h *Handler) logFrameResult(
+	frameCtx context.Context,
+	reqID uint64,
+	traceID string,
+	command string,
+	shadowEnabled bool,
+	span trace.Span,
+	frameStart time.Time,
+	result protocol.RunResult,
+) {
 	shadowSelected := result.Shadow.Selected
 	if shadowEnabled && !result.ShadowStarted {
 		shadowSelected = shadowNotStarted
@@ -206,7 +218,7 @@ func (h *Handler) logFrameResult(frameCtx context.Context, reqID uint64, traceID
 	h.logger.Info("milter_proxy",
 		"req_id", reqID,
 		"trace_id", traceID,
-		"command", command,
+		milterMetaCommand, command,
 		"shadow_enabled", shadowEnabled,
 		"shadow_started", result.ShadowStarted,
 		"shadow_ok", result.ShadowOK,
