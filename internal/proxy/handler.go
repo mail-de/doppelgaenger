@@ -20,29 +20,36 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
 
+	"doppelgaenger/internal/backend"
+	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/headers"
 	"doppelgaenger/internal/mapping"
 	"doppelgaenger/internal/observability"
+	"doppelgaenger/internal/pathrules"
 	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/ratelimit"
 )
 
 const (
-	protocolHTTP           = "http"
-	shadowNotStarted       = "shadow_not_started"
-	headerNauthilusSession = "X-Nauthilus-Session"
+	protocolHTTP                = "http"
+	shadowNotStarted            = "shadow_not_started"
+	shadowSkipReasonRateLimited = "rate_limited"
+	compareSkipReasonNoShadow   = "no_shadow"
+	headerNauthilusSession      = "X-Nauthilus-Session"
 )
 
 // Handler handles incoming proxy requests.
 type Handler struct {
-	cfg           config.Config
-	adapter       protocol.Adapter
-	runner        protocol.Runner
-	shadowLimiter ratelimit.Limiter
-	pathMapper    mapping.PathMapper
-	logger        *slog.Logger
-	observability *observability.Observability
+	cfg              config.Config
+	adapter          protocol.Adapter
+	runner           protocol.Runner
+	shadowLimiter    ratelimit.Limiter
+	pathMapper       mapping.PathMapper
+	pathRuleResolver *pathrules.Resolver
+	httpComparators  *compare.Registry
+	logger           *slog.Logger
+	observability    *observability.Observability
 
 	requestID atomic.Uint64
 	randMu    sync.Mutex
@@ -52,33 +59,42 @@ type Handler struct {
 // HandlerDeps describes dependencies needed for Handler.
 type HandlerDeps struct {
 	fx.In
-	Config        config.Config
-	Adapter       protocol.Adapter
-	Runner        protocol.Runner
-	ShadowLimiter ratelimit.Limiter
-	PathMapper    mapping.PathMapper
-	Logger        *slog.Logger
-	Observability *observability.Observability `optional:"true"`
+	Config           config.Config
+	Adapter          protocol.Adapter
+	Runner           protocol.Runner
+	ShadowLimiter    ratelimit.Limiter
+	PathMapper       mapping.PathMapper
+	PathRuleResolver *pathrules.Resolver
+	HTTPComparators  *compare.Registry
+	Logger           *slog.Logger
+	Observability    *observability.Observability `optional:"true"`
 }
 
 type httpLogPayload struct {
-	ctx           context.Context
-	reqID         uint64
-	traceID       string
-	corrID        string
-	corrGenerated bool
-	remoteAddr    string
-	method        string
-	path          string
-	rawQuery      string
-	doShadow      bool
-	forcedShadow  bool
-	shadowStarted bool
-	primaryRes    protocol.Response
-	shadowRes     protocol.Response
-	shadowErr     string
-	compareResult protocol.CompareResult
-	compareErr    error
+	ctx               context.Context
+	reqID             uint64
+	traceID           string
+	corrID            string
+	corrGenerated     bool
+	remoteAddr        string
+	method            string
+	path              string
+	rawQuery          string
+	doShadow          bool
+	forcedShadow      bool
+	shadowStarted     bool
+	pathRule          string
+	shadowMode        string
+	shadowSkipReason  string
+	compareEnabled    bool
+	compareMode       string
+	compareHeaders    []string
+	compareSkipReason string
+	primaryRes        protocol.Response
+	shadowRes         protocol.Response
+	shadowErr         string
+	compareResult     protocol.CompareResult
+	compareErr        error
 }
 
 type httpRequestContext struct {
@@ -90,23 +106,39 @@ type httpRequestContext struct {
 	remoteAddr string
 }
 
+type shadowDecision struct {
+	doShadow   bool
+	forced     bool
+	skipReason string
+}
+
+type comparisonDecision struct {
+	enabled    bool
+	mode       string
+	headers    []string
+	skipReason string
+}
+
 // NewHandler constructs a proxy handler with its dependencies.
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{
-		cfg:           deps.Config,
-		adapter:       deps.Adapter,
-		runner:        deps.Runner,
-		shadowLimiter: deps.ShadowLimiter,
-		pathMapper:    deps.PathMapper,
-		logger:        deps.Logger,
-		observability: deps.Observability,
-		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		cfg:              deps.Config,
+		adapter:          deps.Adapter,
+		runner:           deps.Runner,
+		shadowLimiter:    deps.ShadowLimiter,
+		pathMapper:       deps.PathMapper,
+		pathRuleResolver: deps.PathRuleResolver,
+		httpComparators:  deps.HTTPComparators,
+		logger:           deps.Logger,
+		observability:    deps.Observability,
+		rng:              rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
 // Handle processes a single incoming request.
 func (h *Handler) Handle(c *gin.Context) {
 	request := h.newHTTPRequestContext(c)
+	pathDecision := h.resolvePathRule(request)
 
 	var spanErr error
 
@@ -142,8 +174,9 @@ func (h *Handler) Handle(c *gin.Context) {
 		hdr.Set("X-Forwarded-Proto", "https")
 	}
 
-	doShadow, forcedShadow := h.shouldShadow(c)
-	shadowEnabledLabel = observability.BoolLabel(doShadow)
+	shadow := h.shouldShadow(c, pathDecision)
+	shadowEnabledLabel = observability.BoolLabel(shadow.doShadow)
+	comparison := h.resolveComparison(pathDecision, shadow)
 
 	event := request.event(requestCtx, hdr, body, primaryPath, shadowPath)
 
@@ -154,9 +187,9 @@ func (h *Handler) Handle(c *gin.Context) {
 
 	h.writePrimaryResponse(c, corrID, primaryRes)
 
-	payload := request.payload(requestCtx, traceID, corrID, corrGenerated, doShadow, forcedShadow, primaryRes)
+	payload := request.payload(requestCtx, traceID, corrID, corrGenerated, shadow, pathDecision, comparison, primaryRes)
 
-	if !doShadow {
+	if !shadow.doShadow {
 		h.logHTTPResult(payload)
 		return
 	}
@@ -191,20 +224,36 @@ func (r httpRequestContext) event(ctx context.Context, hdr http.Header, body []b
 	}
 }
 
-func (r httpRequestContext) payload(ctx context.Context, traceID, corrID string, corrGenerated, doShadow, forcedShadow bool, primaryRes protocol.Response) httpLogPayload {
+func (r httpRequestContext) payload(
+	ctx context.Context,
+	traceID,
+	corrID string,
+	corrGenerated bool,
+	shadow shadowDecision,
+	pathDecision pathrules.Decision,
+	comparison comparisonDecision,
+	primaryRes protocol.Response,
+) httpLogPayload {
 	return httpLogPayload{
-		reqID:         r.reqID,
-		ctx:           ctx,
-		traceID:       traceID,
-		corrID:        corrID,
-		corrGenerated: corrGenerated,
-		remoteAddr:    r.remoteAddr,
-		method:        r.method,
-		path:          r.path,
-		rawQuery:      r.rawQuery,
-		doShadow:      doShadow,
-		forcedShadow:  forcedShadow,
-		primaryRes:    primaryRes,
+		reqID:             r.reqID,
+		ctx:               ctx,
+		traceID:           traceID,
+		corrID:            corrID,
+		corrGenerated:     corrGenerated,
+		remoteAddr:        r.remoteAddr,
+		method:            r.method,
+		path:              r.path,
+		rawQuery:          r.rawQuery,
+		doShadow:          shadow.doShadow,
+		forcedShadow:      shadow.forced,
+		pathRule:          pathDecision.RuleName,
+		shadowMode:        string(pathDecision.ShadowMode),
+		shadowSkipReason:  shadow.skipReason,
+		compareEnabled:    comparison.enabled,
+		compareMode:       comparison.mode,
+		compareHeaders:    comparison.headers,
+		compareSkipReason: comparison.skipReason,
+		primaryRes:        primaryRes,
 	}
 }
 
@@ -308,16 +357,93 @@ func (h *Handler) mapRequestPaths(c *gin.Context, request httpRequestContext, tr
 	return "", "", false
 }
 
-func (h *Handler) shouldShadow(c *gin.Context) (bool, bool) {
-	forcedShadow := h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != ""
-	sampledShadow := h.sampleShadow()
-	doShadow := forcedShadow || sampledShadow
-
-	if doShadow && !forcedShadow && h.shadowLimiter != nil && !h.shadowLimiter.Allow() {
-		return false, forcedShadow
+func (h *Handler) resolvePathRule(request httpRequestContext) pathrules.Decision {
+	if h.pathRuleResolver == nil {
+		return pathrules.Decision{
+			ShadowMode:      pathrules.ShadowModeInherit,
+			CompareDecision: pathrules.CompareDecisionInherit,
+		}
 	}
 
-	return doShadow, forcedShadow
+	return h.pathRuleResolver.Resolve(request.method, request.path)
+}
+
+func (h *Handler) shouldShadow(c *gin.Context, pathDecision pathrules.Decision) shadowDecision {
+	forcedShadow := h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != ""
+
+	if pathDecision.ShadowMode == pathrules.ShadowModeNever {
+		reason := pathDecision.ShadowSkipReason
+		if reason == "" {
+			reason = pathrules.SkipReasonPathRule
+		}
+
+		return shadowDecision{forced: forcedShadow, skipReason: reason}
+	}
+
+	doShadow := false
+
+	switch pathDecision.ShadowMode {
+	case pathrules.ShadowModeAlways:
+		doShadow = true
+	case pathrules.ShadowModeAuto, pathrules.ShadowModeInherit:
+		doShadow = forcedShadow || h.sampleShadow()
+	default:
+		doShadow = forcedShadow || h.sampleShadow()
+	}
+
+	if doShadow && !forcedShadow && h.shadowLimiter != nil && !h.shadowLimiter.Allow() {
+		return shadowDecision{forced: forcedShadow, skipReason: shadowSkipReasonRateLimited}
+	}
+
+	return shadowDecision{doShadow: doShadow, forced: forcedShadow}
+}
+
+func (h *Handler) resolveComparison(pathDecision pathrules.Decision, shadow shadowDecision) comparisonDecision {
+	decision := comparisonDecision{
+		mode:    h.resolvedCompareMode(pathDecision),
+		headers: h.resolvedCompareHeaders(pathDecision),
+	}
+
+	if pathDecision.CompareDecision == pathrules.CompareDecisionOff {
+		decision.skipReason = pathDecision.CompareSkipReason
+		if decision.skipReason == "" {
+			decision.skipReason = pathrules.SkipReasonPathRule
+		}
+
+		return decision
+	}
+
+	if !shadow.doShadow {
+		decision.skipReason = pathDecision.CompareSkipReason
+		if decision.skipReason == "" {
+			decision.skipReason = compareSkipReasonNoShadow
+		}
+
+		return decision
+	}
+
+	decision.enabled = true
+
+	return decision
+}
+
+func (h *Handler) resolvedCompareMode(pathDecision pathrules.Decision) string {
+	if strings.TrimSpace(pathDecision.CompareMode) != "" {
+		return pathDecision.CompareMode
+	}
+
+	return h.cfg.CompareMode
+}
+
+func (h *Handler) resolvedCompareHeaders(pathDecision pathrules.Decision) []string {
+	if !pathDecision.CompareHeadersSet {
+		return nil
+	}
+
+	compareHeaders := make([]string, len(pathDecision.CompareHeaders))
+	copy(compareHeaders, pathDecision.CompareHeaders)
+
+	return compareHeaders
 }
 
 func (h *Handler) sampleShadow() bool {
@@ -436,6 +562,12 @@ func (h *Handler) startShadow(requestCtx context.Context, event protocol.Event, 
 		}
 
 		payload.shadowErr = shadowNotStarted
+		payload.compareEnabled = false
+
+		if payload.compareSkipReason == "" {
+			payload.compareSkipReason = compareSkipReasonNoShadow
+		}
+
 		h.logHTTPResult(payload)
 
 		return
@@ -459,6 +591,12 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 	if err := shadowSession.Send(event); err != nil {
 		payload.shadowRes.Err = err
 		payload.shadowErr = protocol.ErrString(err)
+		payload.compareEnabled = false
+
+		if payload.compareSkipReason == "" {
+			payload.compareSkipReason = compareSkipReasonNoShadow
+		}
+
 		h.logHTTPResult(payload)
 
 		return
@@ -472,21 +610,60 @@ func (h *Handler) runShadowAndLog(event protocol.Event, shadowSession protocol.T
 	payload.shadowRes = shadowRes
 	payload.shadowErr = protocol.ErrString(shadowRes.Err)
 
-	if h.runner.Comparator == nil {
-		payload.compareErr = fmt.Errorf("missing protocol comparator")
+	if !payload.compareEnabled {
 		h.logHTTPResult(payload)
 
 		return
 	}
 
-	compareResult, compareErr := h.runner.Comparator.Compare(payload.primaryRes, shadowRes)
+	compareResult, compareErr := h.compareHTTPResponses(payload, shadowRes)
 	payload.compareResult = compareResult
 	payload.compareErr = compareErr
 	h.logHTTPResult(payload)
 }
 
+func (h *Handler) compareHTTPResponses(payload httpLogPayload, shadowRes protocol.Response) (protocol.CompareResult, error) {
+	if h.httpComparators != nil {
+		result, err := h.httpComparators.Compare(
+			payload.compareMode,
+			payload.compareHeaders,
+			httpBackendResult(payload.primaryRes),
+			httpBackendResult(shadowRes),
+		)
+
+		return protocol.CompareResult{
+			Mode:           result.Mode,
+			Diff:           result.Diff,
+			HeaderDiff:     result.HeaderDiff,
+			HeaderPrimary:  result.HeaderPrimary,
+			HeaderShadow:   result.HeaderShadow,
+			HeaderDiffs:    result.HeaderDiffs,
+			BodyDiff:       result.BodyDiff,
+			JSONDiffs:      result.JSONDiffs,
+			HTMLSimilarity: result.HTMLSimilarity,
+		}, err
+	}
+
+	if h.runner.Comparator == nil {
+		return protocol.CompareResult{}, fmt.Errorf("missing protocol comparator")
+	}
+
+	return h.runner.Comparator.Compare(payload.primaryRes, shadowRes)
+}
+
+func httpBackendResult(response protocol.Response) backend.Result {
+	return backend.Result{
+		Header:   response.Header,
+		Body:     response.Body,
+		Err:      response.Err,
+		Proto:    response.Proto,
+		Duration: response.Duration,
+		Status:   response.Status,
+	}
+}
+
 func (h *Handler) logHTTPResult(payload httpLogPayload) {
-	compareResult := h.normalizedCompareResult(payload.compareResult)
+	compareResult := h.normalizedCompareResult(payload)
 	pKV, sKV, diffs, hasDiff := h.filteredHeaderLogFields(payload, compareResult)
 	shadowSelected, shadowErr, shadowOK := shadowLogFields(payload)
 
@@ -507,6 +684,9 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		"shadow_enabled", payload.doShadow,
 		"shadow_forced", payload.forcedShadow,
 		"shadow_started", payload.shadowStarted,
+		"path_rule", payload.pathRule,
+		"shadow_mode", payload.shadowMode,
+		"shadow_skip_reason", payload.shadowSkipReason,
 
 		"primary_status", payload.primaryRes.Status,
 		"primary_proto", payload.primaryRes.Proto,
@@ -523,6 +703,8 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		"shadow_headers", sKV,
 
 		"compare_mode", compareResult.Mode,
+		"compare_enabled", payload.compareEnabled,
+		"compare_skip_reason", payload.compareSkipReason,
 		"diff", hasDiff,
 		"diffs", diffs,
 		"body_diff", compareResult.BodyDiff,
@@ -532,7 +714,12 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 	)
 }
 
-func (h *Handler) normalizedCompareResult(compareResult protocol.CompareResult) protocol.CompareResult {
+func (h *Handler) normalizedCompareResult(payload httpLogPayload) protocol.CompareResult {
+	compareResult := payload.compareResult
+	if compareResult.Mode == "" {
+		compareResult.Mode = payload.compareMode
+	}
+
 	if compareResult.Mode == "" {
 		compareResult.Mode = h.cfg.CompareMode
 	}
@@ -582,11 +769,15 @@ func shadowLogFields(payload httpLogPayload) (string, string, bool) {
 }
 
 func comparisonMetricResult(payload httpLogPayload, hasDiff bool) string {
+	if payload.compareSkipReason == pathrules.SkipReasonPathRule || payload.compareSkipReason == pathrules.SkipReasonPathUnmatched {
+		return observability.ResultSkipped
+	}
+
 	if payload.doShadow && payload.shadowErr != "" {
 		return observability.ResultError
 	}
 
-	if !payload.doShadow || !payload.shadowStarted {
+	if !payload.compareEnabled || !payload.doShadow || !payload.shadowStarted {
 		return observability.ResultSkipped
 	}
 

@@ -35,7 +35,11 @@ func newJSONComparator(cfg config.Config, logger *slog.Logger) *jsonComparator {
 }
 
 func (c *jsonComparator) Compare(primary, shadow backend.Result) (Result, error) {
-	pKV, sKV, diffs, headerDiff := c.compareHeaders(primary.Header, shadow.Header)
+	return c.CompareWithHeaders(primary, shadow, nil)
+}
+
+func (c *jsonComparator) CompareWithHeaders(primary, shadow backend.Result, compareHeaders []string) (Result, error) {
+	pKV, sKV, diffs, headerDiff := c.compareHeaders(primary.Header, shadow.Header, compareHeaders)
 	result := Result{
 		Mode:          ModeJSON,
 		HeaderDiff:    headerDiff,

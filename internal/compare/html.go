@@ -16,7 +16,11 @@ type htmlComparator struct {
 }
 
 func (c *htmlComparator) Compare(primary, shadow backend.Result) (Result, error) {
-	pKV, sKV, diffs, headerDiff := c.compareHeaders(primary.Header, shadow.Header)
+	return c.CompareWithHeaders(primary, shadow, nil)
+}
+
+func (c *htmlComparator) CompareWithHeaders(primary, shadow backend.Result, compareHeaders []string) (Result, error) {
+	pKV, sKV, diffs, headerDiff := c.compareHeaders(primary.Header, shadow.Header, compareHeaders)
 	result := Result{
 		Mode:          ModeHTML,
 		HeaderDiff:    headerDiff,

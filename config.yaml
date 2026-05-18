@@ -166,6 +166,36 @@ compare_json_strict: false
 # Applies to: HTTP protocol.
 compare_html_threshold: 0.99
 
+# Path Rule Settings
+# ------------------------------------------------------------------------------
+# path_rules: optional ordered HTTP path policy. Empty preserves global behavior.
+# Rules match the inbound path before path_mapping rewrites it. If this list is
+# non-empty and no rule matches, the request is primary-only.
+# Applies to: HTTP protocol.
+path_rules: []
+
+# Example: JSON API comparison, metrics/health deny, and catch-all primary-only.
+# path_rules:
+#   - name: json-api
+#     methods: ["POST"]
+#     match: "^/api/v1/json$"
+#     shadow: auto
+#     compare: on
+#     compare_mode: json
+#     compare_headers:
+#       - "Content-Type"
+#       - "X-Api-Status"
+#
+#   - name: metrics-health
+#     match: "^/(metrics|healthz)$"
+#     shadow: never
+#     compare: off
+#
+#   - name: default-primary-only
+#     match: "^/.*$"
+#     shadow: never
+#     compare: off
+
 # Logging Settings
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.

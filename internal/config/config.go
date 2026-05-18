@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,15 @@ const (
 	compareModeHeader = "header"
 	compareModeJSON   = "json"
 	compareModeHTML   = "html"
+
+	pathRuleShadowInherit = "inherit"
+	pathRuleShadowAuto    = "auto"
+	pathRuleShadowNever   = "never"
+	pathRuleShadowAlways  = "always"
+
+	pathRuleCompareInherit = "inherit"
+	pathRuleCompareOn      = "on"
+	pathRuleCompareOff     = "off"
 
 	selectionRoundRobin   = "round_robin"
 	selectionSourceIPHash = "source_ip_hash"
@@ -159,6 +169,10 @@ type Config struct {
 	// Applies to: HTTP protocol.
 	CompareMode string `mapstructure:"compare_mode"`
 
+	// PathRules define ordered HTTP path-specific shadow and comparison policy.
+	// Applies to: HTTP protocol.
+	PathRules []PathRule `mapstructure:"path_rules"`
+
 	// JSONStrict controls strict JSON comparison behavior.
 	// Applies to: HTTP protocol.
 	JSONStrict bool `mapstructure:"compare_json_strict"`
@@ -191,6 +205,17 @@ type Config struct {
 
 	// Observability controls optional OpenMetrics and OpenTelemetry exporters.
 	Observability ObservabilityConfig `mapstructure:"observability"`
+}
+
+// PathRule describes a path-specific HTTP shadow and comparison rule.
+type PathRule struct {
+	Name           string   `mapstructure:"name"`
+	Methods        []string `mapstructure:"methods"`
+	Match          string   `mapstructure:"match"`
+	Shadow         string   `mapstructure:"shadow"`
+	Compare        string   `mapstructure:"compare"`
+	CompareMode    string   `mapstructure:"compare_mode"`
+	CompareHeaders []string `mapstructure:"compare_headers"`
 }
 
 // ObservabilityConfig contains all opt-in metrics and tracing settings.
@@ -301,6 +326,7 @@ func setHTTPDefaults(v *viper.Viper) {
 	v.SetDefault("upstream_http_max_idle_conns", 1024)
 	v.SetDefault("upstream_http_max_idle_conns_per_host", 256)
 	v.SetDefault("upstream_http_max_conns_per_host", 0)
+	v.SetDefault("path_rules", []PathRule{})
 }
 
 func setMilterDefaults(v *viper.Viper) {
@@ -396,6 +422,10 @@ func validate(cfg *Config) error {
 	normalizeHTTPTransportConfig(cfg)
 	normalizeCompareConfig(cfg)
 	normalizeRuntimeConfig(cfg)
+
+	if err := validatePathRules(cfg); err != nil {
+		return err
+	}
 
 	return validateObservabilityConfig(&cfg.Observability)
 }
@@ -499,6 +529,134 @@ func normalizeRuntimeConfig(cfg *Config) {
 	cfg.RunAsUser = strings.TrimSpace(cfg.RunAsUser)
 	cfg.RunAsGroup = strings.TrimSpace(cfg.RunAsGroup)
 	cfg.ChrootDir = strings.TrimSpace(cfg.ChrootDir)
+}
+
+func validatePathRules(cfg *Config) error {
+	if cfg.PathRules == nil {
+		cfg.PathRules = []PathRule{}
+
+		return nil
+	}
+
+	for i := range cfg.PathRules {
+		rule := &cfg.PathRules[i]
+
+		rule.Name = strings.TrimSpace(rule.Name)
+		rule.Match = strings.TrimSpace(rule.Match)
+
+		if rule.Match == "" {
+			return fmt.Errorf("path_rules[%d].match is required", i)
+		}
+
+		if _, err := regexp.Compile(rule.Match); err != nil {
+			return fmt.Errorf("path_rules[%d].match is invalid: %w", i, err)
+		}
+
+		methods, err := normalizePathRuleMethods(rule.Methods)
+		if err != nil {
+			return fmt.Errorf("path_rules[%d].methods: %w", i, err)
+		}
+
+		shadow, err := normalizePathRuleShadow(rule.Shadow)
+		if err != nil {
+			return fmt.Errorf("path_rules[%d].shadow: %w", i, err)
+		}
+
+		compare, err := normalizePathRuleCompare(rule.Compare)
+		if err != nil {
+			return fmt.Errorf("path_rules[%d].compare: %w", i, err)
+		}
+
+		compareMode, err := normalizePathRuleCompareMode(rule.CompareMode)
+		if err != nil {
+			return fmt.Errorf("path_rules[%d].compare_mode: %w", i, err)
+		}
+
+		compareHeaders, err := normalizeHTTPHeaderNames(rule.CompareHeaders)
+		if err != nil {
+			return fmt.Errorf("path_rules[%d].compare_headers: %w", i, err)
+		}
+
+		rule.Methods = methods
+		rule.Shadow = shadow
+		rule.Compare = compare
+		rule.CompareMode = compareMode
+		rule.CompareHeaders = compareHeaders
+	}
+
+	return nil
+}
+
+func normalizePathRuleMethods(methods []string) ([]string, error) {
+	if methods == nil {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(methods))
+	for _, raw := range methods {
+		method := strings.ToUpper(strings.TrimSpace(raw))
+		if method == "" || !httpguts.ValidHeaderFieldName(method) {
+			return nil, fmt.Errorf("invalid HTTP method %q", raw)
+		}
+
+		normalized = append(normalized, method)
+	}
+
+	return normalized, nil
+}
+
+func normalizePathRuleShadow(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return pathRuleShadowInherit, nil
+	case pathRuleShadowInherit, pathRuleShadowAuto, pathRuleShadowNever, pathRuleShadowAlways:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: inherit, auto, never, always)", raw)
+	}
+}
+
+func normalizePathRuleCompare(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return pathRuleCompareInherit, nil
+	case pathRuleCompareInherit, pathRuleCompareOn, pathRuleCompareOff:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: inherit, on, off)", raw)
+	}
+}
+
+func normalizePathRuleCompareMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "", compareModeNginx, compareModeHeader, compareModeJSON, compareModeHTML:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: nginx, header, json, html)", raw)
+	}
+}
+
+func normalizeHTTPHeaderNames(names []string) ([]string, error) {
+	if names == nil {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		canonical := http.CanonicalHeaderKey(name)
+
+		if canonical == "" || !httpguts.ValidHeaderFieldName(canonical) {
+			return nil, fmt.Errorf("invalid HTTP header name %q", raw)
+		}
+
+		normalized = append(normalized, canonical)
+	}
+
+	return normalized, nil
 }
 
 func validateObservabilityConfig(cfg *ObservabilityConfig) error {

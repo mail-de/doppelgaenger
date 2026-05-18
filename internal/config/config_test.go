@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const pathRuleTestMethodPost = "POST"
+
 func TestLoadReadsConfigFile(t *testing.T) {
 	loaded := loadTestConfig(t, []byte(`
 protocol: http
@@ -175,6 +177,246 @@ observability:
   otel_enabled: true
   otel_traces_enabled: true
 `), "expected config loading to fail without otel_exporter_otlp_endpoint")
+}
+
+func TestLoadPathRules(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+path_rules:
+  - name: " auth-json "
+    methods: ["post"]
+    match: "^/api/v1/auth/json$"
+    shadow: auto
+    compare: on
+    compare_mode: json
+    compare_headers:
+      - auth-status
+      - Auth-Error
+`))
+
+	if len(loaded.PathRules) != 1 {
+		t.Fatalf("expected 1 path rule, got %d", len(loaded.PathRules))
+	}
+
+	rule := loaded.PathRules[0]
+	if rule.Name != "auth-json" {
+		t.Fatalf("expected trimmed path rule name, got %q", rule.Name)
+	}
+
+	if len(rule.Methods) != 1 || rule.Methods[0] != pathRuleTestMethodPost {
+		t.Fatalf("expected method %s, got %#v", pathRuleTestMethodPost, rule.Methods)
+	}
+
+	if rule.Match != "^/api/v1/auth/json$" {
+		t.Fatalf("expected match regex to load, got %q", rule.Match)
+	}
+
+	if rule.Shadow != pathRuleShadowAuto {
+		t.Fatalf("expected shadow auto, got %q", rule.Shadow)
+	}
+
+	if rule.Compare != pathRuleCompareOn {
+		t.Fatalf("expected compare on, got %q", rule.Compare)
+	}
+
+	if rule.CompareMode != compareModeJSON {
+		t.Fatalf("expected compare mode json, got %q", rule.CompareMode)
+	}
+
+	expectedHeaders := []string{"Auth-Status", "Auth-Error"}
+	if len(rule.CompareHeaders) != len(expectedHeaders) {
+		t.Fatalf("expected compare headers %#v, got %#v", expectedHeaders, rule.CompareHeaders)
+	}
+
+	for i, expected := range expectedHeaders {
+		if rule.CompareHeaders[i] != expected {
+			t.Fatalf("expected compare header %d to be %q, got %q", i, expected, rule.CompareHeaders[i])
+		}
+	}
+}
+
+func TestLoadPathRulesRejectsInvalidRuleShape(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "invalid regex",
+			yaml: `
+path_rules:
+  - match: "["
+`,
+		},
+		{
+			name: "missing match",
+			yaml: `
+path_rules:
+  - name: no-match
+`,
+		},
+	}
+
+	assertPathRuleLoadFailures(t, tests)
+}
+
+func TestLoadPathRulesRejectsInvalidRuleValues(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "invalid shadow",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    shadow: off
+`,
+		},
+		{
+			name: "invalid compare",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    compare: yes
+`,
+		},
+		{
+			name: "invalid compare mode",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    compare_mode: xml
+`,
+		},
+		{
+			name: "invalid HTTP method",
+			yaml: `
+path_rules:
+  - methods: ["GET /bad"]
+    match: "^/api$"
+`,
+		},
+		{
+			name: "invalid compare header",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    compare_headers: ["bad header"]
+`,
+		},
+	}
+
+	assertPathRuleLoadFailures(t, tests)
+}
+
+func assertPathRuleLoadFailures(t *testing.T, tests []struct {
+	name string
+	yaml string
+}) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectLoadFailure(t, []byte("protocol: http\n"+tt.yaml), "expected invalid path rule to fail config loading")
+		})
+	}
+}
+
+func TestLoadPathRulesMethodsAreNormalized(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+path_rules:
+  - methods: ["get", "Post", "PATCH"]
+    match: "^/api$"
+`))
+
+	expected := []string{"GET", "POST", "PATCH"}
+	if len(loaded.PathRules[0].Methods) != len(expected) {
+		t.Fatalf("expected methods %#v, got %#v", expected, loaded.PathRules[0].Methods)
+	}
+
+	for i, method := range expected {
+		if loaded.PathRules[0].Methods[i] != method {
+			t.Fatalf("expected method %d to be %q, got %q", i, method, loaded.PathRules[0].Methods[i])
+		}
+	}
+}
+
+func TestLoadPathRulesDefaultModes(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+path_rules:
+  - match: "^/api$"
+`))
+
+	rule := loaded.PathRules[0]
+	if rule.Shadow != pathRuleShadowInherit {
+		t.Fatalf("expected default shadow inherit, got %q", rule.Shadow)
+	}
+
+	if rule.Compare != pathRuleCompareInherit {
+		t.Fatalf("expected default compare inherit, got %q", rule.Compare)
+	}
+
+	if rule.CompareMode != "" {
+		t.Fatalf("expected empty compare_mode to preserve global fallback, got %q", rule.CompareMode)
+	}
+}
+
+func TestLoadPathRulesCompareHeadersPresence(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+path_rules:
+  - name: omitted
+    match: "^/omitted$"
+  - name: empty
+    match: "^/empty$"
+    compare_headers: []
+`))
+
+	if loaded.PathRules[0].CompareHeaders != nil {
+		t.Fatalf("expected omitted compare_headers to stay nil, got %#v", loaded.PathRules[0].CompareHeaders)
+	}
+
+	if loaded.PathRules[1].CompareHeaders == nil {
+		t.Fatalf("expected explicit empty compare_headers to be distinguishable from omitted")
+	}
+
+	if len(loaded.PathRules[1].CompareHeaders) != 0 {
+		t.Fatalf("expected explicit empty compare_headers to have length 0, got %#v", loaded.PathRules[1].CompareHeaders)
+	}
+}
+
+func TestLoadPathRulesEmptyOrAbsentPreservesDefaults(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "absent",
+			yaml: "protocol: http\n",
+		},
+		{
+			name: "empty",
+			yaml: `
+protocol: http
+path_rules: []
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loaded := loadTestConfig(t, []byte(tt.yaml))
+			if len(loaded.PathRules) != 0 {
+				t.Fatalf("expected no path rules, got %#v", loaded.PathRules)
+			}
+
+			if loaded.CompareMode != compareModeNginx {
+				t.Fatalf("expected existing compare_mode default, got %q", loaded.CompareMode)
+			}
+		})
+	}
 }
 
 func expectLoadFailure(t *testing.T, configContent []byte, message string) {

@@ -12,7 +12,11 @@ type nginxComparator struct {
 }
 
 func (c *nginxComparator) Compare(primary, shadow backend.Result) (Result, error) {
-	pKV, sKV, diffs, hasDiff := c.compareHeaders(primary.Header, shadow.Header)
+	return c.CompareWithHeaders(primary, shadow, nil)
+}
+
+func (c *nginxComparator) CompareWithHeaders(primary, shadow backend.Result, compareHeaders []string) (Result, error) {
+	pKV, sKV, diffs, hasDiff := c.compareHeaders(primary.Header, shadow.Header, compareHeaders)
 
 	return Result{
 		Mode:          ModeNginx,

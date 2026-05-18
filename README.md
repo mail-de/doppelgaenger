@@ -59,6 +59,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `compare_mode`: Selection of the comparison engine (`nginx`, `header`, `json`, `html`).
 - `compare_json_strict`: Enables strict mode for JSON comparison.
 - `compare_html_threshold`: Similarity threshold for HTML comparison.
+- `path_rules`: Ordered HTTP path policy for per-route shadowing and comparison.
 - `path_mapping`: Advanced path rewriting rules (see [Path Mapping](#path-mapping-modes)).
 
 #### Milter-specific Settings
@@ -127,6 +128,33 @@ compare_headers:
 compare_json_strict: false
 compare_html_threshold: 0.99
 
+# HTTP path rules are optional. An absent or empty list preserves the global
+# shadow and comparison behavior above.
+path_rules: []
+
+# Example: shadow one JSON API route, keep metrics and health primary-only,
+# and make all other routes primary-only through an explicit catch-all.
+# path_rules:
+#   - name: json-api
+#     methods: ["POST"]
+#     match: "^/api/v1/json$"
+#     shadow: auto
+#     compare: on
+#     compare_mode: json
+#     compare_headers:
+#       - "Content-Type"
+#       - "X-Api-Status"
+#
+#   - name: metrics-health
+#     match: "^/(metrics|healthz)$"
+#     shadow: never
+#     compare: off
+#
+#   - name: default-primary-only
+#     match: "^/.*$"
+#     shadow: never
+#     compare: off
+
 # Logging
 log_json: true
 log_session_only_on_diff: true
@@ -171,6 +199,56 @@ path_mapping:
       shadow: "/legacy/$1"
 ```
 
+#### HTTP Path Rules
+
+`path_rules` is an optional top-level HTTP-only list. When it is absent or
+empty, Doppelgaenger keeps the existing global behavior from
+`shadow_sample_percent`, `shadow_force_header`, `shadow_rps`,
+`shadow_burst`, `compare_mode`, and `compare_headers`.
+
+When rules are configured, they are evaluated in order and the first rule that
+matches both `methods` and `match` wins. If no rule matches, the request is
+primary-only: no shadow request is started and comparison is skipped. Add an
+explicit catch-all rule such as `match: "^/.*$"` when the remaining path space
+should keep a deliberate fallback policy.
+
+Rule fields:
+
+- `name`: Optional stable name used in logs. If omitted, a deterministic name
+  such as `rule[0]` is used.
+- `methods`: Optional HTTP method list. Values are normalized to uppercase.
+  Empty or omitted means all methods.
+- `match`: Required regular expression matched against the inbound request path
+  only. Query strings are not part of matching.
+- `shadow`: Optional shadow policy. Defaults to `inherit`.
+- `compare`: Optional comparison policy. Defaults to `inherit`.
+- `compare_mode`: Optional per-rule comparison engine (`nginx`, `header`,
+  `json`, or `html`). If omitted, the global `compare_mode` is used.
+- `compare_headers`: Optional per-rule response header list. If omitted, the
+  global `compare_headers` list is used. If explicitly set to `[]`, no headers
+  are compared for that rule.
+
+Supported `shadow` values:
+
+- `inherit`: Use the current global shadow decision.
+- `auto`: Allow normal sampling and `shadow_force_header`.
+- `never`: Do not shadow, even when the force header is present.
+- `always`: Start shadowing without sampling when the rule matches. The
+  `shadow_rps` and `shadow_burst` rate limiter still protects the shadow
+  backend.
+
+Supported `compare` values:
+
+- `inherit`: Compare when shadowing runs, using global comparison behavior.
+- `on`: Compare when shadowing runs, using the per-rule `compare_mode` when set
+  or the global mode otherwise.
+- `off`: Skip comparison even if the shadow request ran.
+
+Path-rule matching uses the inbound request path before `path_mapping` rewrites
+the path for primary and shadow backends. The force header can still bypass the
+shadow rate limiter on allowed paths, preserving the global override behavior;
+`shadow: never` is authoritative and wins over the force header.
+
 #### Path Mapping Modes
 
 - **direct**: Forwards the incoming request path unchanged to both primary and shadow backends.
@@ -204,9 +282,9 @@ log_json: true
 
 1. **Request Arrival**: The proxy receives an HTTP(S) request.
 2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. The response from that backend is returned to the client.
-3. **Shadow Decision**: Based on `shadow_sample_percent` or the presence of `shadow_force_header`, the proxy decides whether to shadow the request.
+3. **Shadow Decision**: Based on the first matching `path_rules` entry, or on global `shadow_sample_percent` and `shadow_force_header` when no rules are configured, the proxy decides whether to shadow the request.
 4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path.
-5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on `compare_mode` in background processing.
+5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on the resolved path rule or the global comparison settings.
 6. **Observability & Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found. When tracing is active, outgoing HTTP primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID header.
 
 ### Milter Mode

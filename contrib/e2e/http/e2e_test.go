@@ -35,6 +35,7 @@ func TestHTTPObservabilityE2E(t *testing.T) {
 	assertHTTPFlow(t, env)
 	assertHTTPNoShadowFlow(t, env)
 	assertHTTPBodyLimit(t, env)
+	assertHTTPPathRules(t, env)
 	assertHTTPMetrics(t, env)
 	processes.doppel.Stop(t)
 	assertOTLPSummary(t, env)
@@ -136,6 +137,29 @@ forward_response_headers:
 compare_headers:
   - "X-Backend"
 compare_mode: "header"
+path_rules:
+  - name: json-api
+    methods: ["GET"]
+    match: "^/api/json$"
+    shadow: auto
+    compare: on
+    compare_mode: json
+    compare_headers: []
+
+  - name: compare-off
+    match: "^/public/compare-off$"
+    shadow: always
+    compare: off
+
+  - name: metrics-health
+    match: "^/(metrics|healthz)$"
+    shadow: never
+    compare: off
+
+  - name: public-compat
+    match: "^/public/.*$"
+    shadow: auto
+    compare: inherit
 log_session_only_on_diff: false
 log_json: true
 observability:
@@ -246,6 +270,63 @@ func assertHTTPBodyLimit(t *testing.T, env httpEnv) {
 	e2etest.MustFileNotContain(t, env.shadowLog, "/shadow/too-large")
 }
 
+func assertHTTPPathRules(t *testing.T, env httpEnv) {
+	t.Helper()
+
+	status, _, body := e2etest.Get(t, e2etest.AddrURL(env.proxyAddr, "/api/json?from=path-rules-json"), map[string]string{
+		"X-Shadow": "force",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for JSON path rule, got %d with body %q", status, body)
+	}
+
+	e2etest.WaitFileContains(t, env.primaryLog, "/api/json", "from=path-rules-json")
+	e2etest.WaitFileContains(t, env.shadowLog, "/api/json", "from=path-rules-json")
+	e2etest.WaitFileContains(t, env.doppelLog, `"path_rule":"json-api"`, `"compare_mode":"json"`, `"compare_enabled":true`)
+
+	status, _, body = e2etest.Get(t, e2etest.AddrURL(env.proxyAddr, "/public/compare-off?from=path-rules-compare-off"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for compare-off path rule, got %d with body %q", status, body)
+	}
+
+	e2etest.WaitFileContains(t, env.shadowLog, "/shadow/compare-off", "from=path-rules-compare-off")
+	e2etest.WaitFileContains(t, env.doppelLog, `"path_rule":"compare-off"`, `"shadow_started":true`, `"compare_enabled":false`, `"compare_skip_reason":"path_rule"`)
+
+	status, _, body = e2etest.Get(t, e2etest.AddrURL(env.proxyAddr, "/metrics?from=path-rules-metrics"), map[string]string{
+		"X-Shadow": "force",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for metrics path rule, got %d with body %q", status, body)
+	}
+
+	e2etest.WaitFileContains(t, env.primaryLog, "/metrics", "from=path-rules-metrics")
+	e2etest.WaitFileContains(t, env.doppelLog, `"path_rule":"metrics-health"`, `"shadow_skip_reason":"path_rule"`, `"compare_skip_reason":"path_rule"`)
+
+	status, _, body = e2etest.Get(t, e2etest.AddrURL(env.proxyAddr, "/healthz?from=path-rules-health"), map[string]string{
+		"X-Shadow": "force",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for health path rule, got %d with body %q", status, body)
+	}
+
+	e2etest.WaitFileContains(t, env.primaryLog, "/healthz", "from=path-rules-health")
+
+	status, _, body = e2etest.Get(t, e2etest.AddrURL(env.proxyAddr, "/unmatched?from=path-rules-unmatched"), map[string]string{
+		"X-Shadow": "force",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for unmatched path rule, got %d with body %q", status, body)
+	}
+
+	e2etest.WaitFileContains(t, env.primaryLog, "/unmatched", "from=path-rules-unmatched")
+	e2etest.WaitFileContains(t, env.doppelLog, `"shadow_skip_reason":"path_unmatched"`, `"compare_skip_reason":"path_unmatched"`)
+
+	time.Sleep(300 * time.Millisecond)
+	e2etest.MustFileNotContain(t, env.shadowLog, "from=path-rules-metrics")
+	e2etest.MustFileNotContain(t, env.shadowLog, "from=path-rules-health")
+	e2etest.MustFileNotContain(t, env.shadowLog, "from=path-rules-unmatched")
+}
+
 func assertHTTPMetrics(t *testing.T, env httpEnv) {
 	t.Helper()
 
@@ -257,6 +338,7 @@ func assertHTTPMetrics(t *testing.T, env httpEnv) {
 	e2etest.MustContain(t, body, "doppelgaenger_comparisons_total")
 	e2etest.MustContain(t, body, `result="diff"`)
 	e2etest.MustContain(t, body, `result="skipped"`)
+	e2etest.MustContain(t, body, `result="error"`)
 }
 
 func assertOTLPSummary(t *testing.T, env httpEnv) {

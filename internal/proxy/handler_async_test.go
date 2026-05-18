@@ -18,12 +18,15 @@ import (
 )
 
 const (
-	testHTTPProto     = "HTTP/1.1"
-	testAuthStatus    = "Auth-Status"
-	testAuthPath      = "/auth"
-	testPathParamKey  = "path"
-	testShadowTarget  = "shadow"
-	testPrimaryTarget = "primary"
+	testHTTPProto         = "HTTP/1.1"
+	testAuthStatus        = "Auth-Status"
+	testAuthPath          = "/auth"
+	testAuthPathRegex     = "^/auth$"
+	testHeaderOK          = "OK"
+	testPathParamKey      = "path"
+	testShadowTarget      = "shadow"
+	testPrimaryTarget     = "primary"
+	testShadowForceHeader = "X-Shadow"
 )
 
 type shadowOutcome struct {
@@ -81,7 +84,7 @@ func (s *asyncTestSession) Receive() (protocol.Response, error) {
 		Status:   200,
 		Proto:    testHTTPProto,
 		Selected: testPrimaryTarget,
-		Header:   http.Header{testAuthStatus: []string{"OK"}},
+		Header:   http.Header{testAuthStatus: []string{testHeaderOK}},
 		Body:     []byte("ok"),
 	}, nil
 }
