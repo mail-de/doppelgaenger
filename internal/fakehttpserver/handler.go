@@ -92,6 +92,7 @@ func (h *Handler) logResponse(w http.ResponseWriter, r *http.Request, reqHeaders
 		"fake response",
 		"method", r.Method,
 		"path", r.URL.Path,
+		"query", r.URL.RawQuery,
 		"mode", h.cfg.Mode,
 		"request_headers", reqHeaders,
 		"response_headers", respHeaders,

@@ -248,7 +248,7 @@ Incoming HTTP `traceparent` is extracted and continued. Outgoing HTTP requests t
 ## Building and Running
 
 ### Prerequisites
-- Go 1.25 or later
+- Go 1.26.3 or later
 
 ### Build
 ```bash
@@ -261,6 +261,23 @@ go build -o fakehttpserver cmd/fakehttpserver/main.go
 make sbom
 ```
 Generates `sbom.cdx.json` in the project directory. During the Docker image build, the SBOM is copied into the image as `/app/sbom.cdx.json`.
+
+### E2E Checks
+```bash
+make e2e-http
+make e2e-milter
+make e2e-docker
+make e2e
+```
+
+The E2E checks build local test binaries and run real doppelgaenger processes
+against fake Primary/Shadow backends. The HTTP check verifies W3C trace context
+and `X-Trace-ID` propagation, Primary/Shadow routing, path rewriting, request
+IDs, per-target headers, body limits, OpenMetrics counters, and OTLP
+trace/metric export. The Milter check verifies Primary/Shadow frame forwarding,
+no-shadow sampling, Milter comparison metrics, and OTLP spans/metrics without
+mutating Milter payloads. The Docker check verifies that the image, compose
+mapping, and mounted runtime config agree on the exposed listener.
 
 ### Run
 ```bash

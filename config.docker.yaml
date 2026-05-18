@@ -3,8 +3,8 @@
 # protocol: selects the proxy protocol. Supported values: "http" or "milter".
 protocol: http
 
-# listen_addr: the address the HTTP proxy listens on (e.g., ":8080").
-listen_addr: ":8080"
+# listen_addr: the address the HTTP proxy listens on.
+listen_addr: ":8443"
 
 # tls_cert_file: path to the TLS certificate file for the proxy server.
 tls_cert_file: "/certs/cert.pem"

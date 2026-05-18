@@ -260,12 +260,27 @@ func (h *Handler) readRequestBody(c *gin.Context, outcome *string, spanErr *erro
 		return nil, true
 	}
 
-	body, err := io.ReadAll(c.Request.Body)
+	reader := io.Reader(c.Request.Body)
+	if h.cfg.MaxBackendBodyBytes > 0 {
+		reader = io.LimitReader(c.Request.Body, h.cfg.MaxBackendBodyBytes+1)
+	}
+
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		*outcome = observability.OutcomeBadRequest
 		*spanErr = err
 
 		c.AbortWithStatus(http.StatusBadRequest)
+
+		return nil, false
+	}
+
+	if h.cfg.MaxBackendBodyBytes > 0 && int64(len(body)) > h.cfg.MaxBackendBodyBytes {
+		err := fmt.Errorf("request body exceeds max_backend_body_bytes %d", h.cfg.MaxBackendBodyBytes)
+		*outcome = observability.OutcomeBadRequest
+		*spanErr = err
+
+		c.AbortWithStatus(http.StatusRequestEntityTooLarge)
 
 		return nil, false
 	}

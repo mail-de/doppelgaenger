@@ -8,7 +8,7 @@ export GOENV=greenteagc
 GOFLAGS=-mod=vendor
 LDFLAGS=-ldflags "-X main.version=$(VERSION)"
 
-.PHONY: all vet lint fix build build-check build-fake clean test race docker-build docker-build-fake docker-run sbom guardrails
+.PHONY: all vet lint fix build build-check build-fake clean test race e2e-http e2e-milter e2e-docker e2e docker-build docker-build-fake docker-run sbom guardrails
 
 all: build build-fake
 
@@ -41,6 +41,17 @@ test:
 
 race:
 	go test $(GOFLAGS) -race -short $$(go list $(GOFLAGS) ./... | grep -v /vendor/)
+
+e2e-http:
+	contrib/e2e/http/run.sh
+
+e2e-milter:
+	contrib/e2e/milter/run.sh
+
+e2e-docker:
+	contrib/e2e/docker/run.sh
+
+e2e: e2e-http e2e-milter e2e-docker
 
 docker-build:
 	docker build --build-arg VERSION=$(VERSION) -t $(BINARY_NAME) .

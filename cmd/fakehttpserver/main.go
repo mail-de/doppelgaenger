@@ -20,8 +20,8 @@ func main() {
 		}),
 		fx.Supply(app.Version(version)),
 		fx.Provide(
-			app.NewLogger,
 			fakehttpserver.Load,
+			fakehttpserver.NewLogger,
 			fx.Annotate(fakehttpserver.NewHandler, fx.As(new(http.Handler))),
 			fakehttpserver.NewServer,
 		),
