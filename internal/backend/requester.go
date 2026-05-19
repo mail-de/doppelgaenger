@@ -29,6 +29,13 @@ const (
 	defaultHTTPMaxIdleConnsPerHost   = 256
 )
 
+// HTTP upstream protocol modes.
+const (
+	HTTPProtocolAuto  = "auto"
+	HTTPProtocolHTTP1 = "http1"
+	HTTPProtocolHTTP2 = "http2"
+)
+
 // Kind distinguishes between primary and shadow backends.
 type Kind string
 
@@ -47,6 +54,7 @@ type Request struct {
 	Method     string
 	Path       string
 	RawQuery   string
+	Host       string
 	RemoteAddr string
 	Header     http.Header
 	Body       []byte
@@ -79,6 +87,7 @@ type HTTPClientConfig struct {
 	MaxIdleConns          int
 	MaxIdleConnsPerHost   int
 	MaxConnsPerHost       int
+	Protocol              string
 }
 
 // Requester executes backend requests directly.
@@ -164,7 +173,13 @@ func (p *requester) newBackendRequest(ctx context.Context, item Request, base *u
 	}
 
 	req.Header = headers.Clone(item.Header)
-	req.Host = base.Host
+	headers.RemoveHopByHop(req.Header)
+
+	if item.Host != "" {
+		req.Host = item.Host
+	} else {
+		req.Host = base.Host
+	}
 
 	if p.obs != nil {
 		p.obs.InjectHTTPTraceContext(ctx, req.Header)
@@ -316,7 +331,7 @@ func newHTTPClient(upstreamTLS *tls.Config, cfg HTTPClientConfig) *http.Client {
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
+		ForceAttemptHTTP2:     cfg.Protocol != HTTPProtocolHTTP1,
 		MaxIdleConns:          cfg.MaxIdleConns,
 		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       cfg.MaxConnsPerHost,
@@ -327,7 +342,16 @@ func newHTTPClient(upstreamTLS *tls.Config, cfg HTTPClientConfig) *http.Client {
 		TLSClientConfig:       upstreamTLS,
 	}
 
-	return &http.Client{Transport: transport}
+	if cfg.Protocol == HTTPProtocolHTTP1 {
+		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	}
+
+	var roundTripper http.RoundTripper = transport
+	if cfg.Protocol == HTTPProtocolHTTP2 {
+		roundTripper = requireHTTP2Transport{next: transport}
+	}
+
+	return &http.Client{Transport: roundTripper}
 }
 
 func normalizeHTTPClientConfig(cfg HTTPClientConfig) HTTPClientConfig {
@@ -359,7 +383,34 @@ func normalizeHTTPClientConfig(cfg HTTPClientConfig) HTTPClientConfig {
 		cfg.MaxConnsPerHost = 0
 	}
 
+	switch cfg.Protocol {
+	case "", HTTPProtocolAuto:
+		cfg.Protocol = HTTPProtocolAuto
+	case HTTPProtocolHTTP1, HTTPProtocolHTTP2:
+	default:
+		cfg.Protocol = HTTPProtocolAuto
+	}
+
 	return cfg
+}
+
+type requireHTTP2Transport struct {
+	next http.RoundTripper
+}
+
+func (t requireHTTP2Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.ProtoMajor == 2 {
+		return resp, nil
+	}
+
+	_ = resp.Body.Close()
+
+	return nil, fmt.Errorf("upstream negotiated %s, expected HTTP/2", resp.Proto)
 }
 
 func singleJoiningSlash(a, b string) string {

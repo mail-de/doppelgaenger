@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+const (
+	headerConnection         = "Connection"
+	headerKeepAlive          = "Keep-Alive"
+	headerProxyAuthenticate  = "Proxy-Authenticate"
+	headerProxyAuthorization = "Proxy-Authorization"
+	headerProxyConnection    = "Proxy-Connection"
+	headerTE                 = "TE"
+	headerTrailer            = "Trailer"
+	headerTransferEncoding   = "Transfer-Encoding"
+	headerUpgrade            = "Upgrade"
+)
+
 // HeaderDiff represents a difference in headers between primary and shadow.
 type HeaderDiff struct {
 	Key     string `json:"key"`
@@ -23,6 +35,31 @@ func Clone(h http.Header) http.Header {
 	}
 
 	return cp
+}
+
+// RemoveHopByHop deletes hop-by-hop headers before forwarding a request upstream.
+func RemoveHopByHop(h http.Header) {
+	for _, value := range h.Values(headerConnection) {
+		for _, token := range strings.Split(value, ",") {
+			if token = strings.TrimSpace(token); token != "" {
+				h.Del(token)
+			}
+		}
+	}
+
+	for _, key := range []string{
+		headerConnection,
+		headerKeepAlive,
+		headerProxyAuthenticate,
+		headerProxyAuthorization,
+		headerProxyConnection,
+		headerTE,
+		headerTrailer,
+		headerTransferEncoding,
+		headerUpgrade,
+	} {
+		h.Del(key)
+	}
 }
 
 // CompareDetailed compares specified headers between primary and shadow responses.

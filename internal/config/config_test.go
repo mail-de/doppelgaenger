@@ -136,6 +136,10 @@ func assertHTTPDefaults(t *testing.T, loaded Config) {
 	if loaded.UpstreamHTTPMaxConnsPerHost != 0 {
 		t.Fatalf("expected upstream_http_max_conns_per_host default 0, got %d", loaded.UpstreamHTTPMaxConnsPerHost)
 	}
+
+	if loaded.UpstreamHTTPProtocol != upstreamHTTPProtocolAuto {
+		t.Fatalf("expected upstream_http_protocol default auto, got %q", loaded.UpstreamHTTPProtocol)
+	}
 }
 
 func assertObservabilityConfig(t *testing.T, loaded Config) {
@@ -164,6 +168,24 @@ protocol: http
 primary_base_urls: []
 shadow_base_urls: []
 `), "expected config loading to fail for empty backend lists")
+}
+
+func TestLoadNormalizesUpstreamHTTPProtocol(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+upstream_http_protocol: " HTTP1 "
+`))
+
+	if loaded.UpstreamHTTPProtocol != upstreamHTTPProtocolHTTP1 {
+		t.Fatalf("expected upstream_http_protocol http1, got %q", loaded.UpstreamHTTPProtocol)
+	}
+}
+
+func TestLoadRejectsInvalidUpstreamHTTPProtocol(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: http
+upstream_http_protocol: spdy
+`), "expected config loading to fail for invalid upstream_http_protocol")
 }
 
 func TestLoadRejectsIncompleteObservabilityConfig(t *testing.T) {

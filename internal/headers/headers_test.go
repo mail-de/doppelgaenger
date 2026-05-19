@@ -8,6 +8,11 @@ import (
 
 const authStatusHeader = "Auth-Status"
 
+const (
+	headerXCloseMe = "X-Close-Me"
+	headerXKeepMe  = "X-Keep-Me"
+)
+
 func TestCloneIndependence(t *testing.T) {
 	original := http.Header{
 		"X-Test": []string{"a", "b"},
@@ -52,5 +57,27 @@ func TestWriteSelected(t *testing.T) {
 
 	if got := rec.Header().Get("X-Unrelated"); got != "" {
 		t.Fatalf("expected X-Unrelated to be empty, got %q", got)
+	}
+}
+
+func TestRemoveHopByHop(t *testing.T) {
+	header := http.Header{}
+	header.Set(headerConnection, "X-Close-Me, keep-alive")
+	header.Set(headerXCloseMe, "drop")
+	header.Set(headerKeepAlive, "timeout=5")
+	header.Set(headerProxyConnection, "keep-alive")
+	header.Set(headerTE, "trailers")
+	header.Set(headerXKeepMe, "ok")
+
+	RemoveHopByHop(header)
+
+	for _, key := range []string{headerConnection, headerXCloseMe, headerKeepAlive, headerProxyConnection, headerTE} {
+		if got := header.Get(key); got != "" {
+			t.Fatalf("expected %s to be removed, got %q", key, got)
+		}
+	}
+
+	if got := header.Get(headerXKeepMe); got != "ok" {
+		t.Fatalf("expected X-Keep-Me to be preserved, got %q", got)
 	}
 }

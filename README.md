@@ -55,6 +55,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `upstream_http_max_idle_conns`: Max idle keep-alive connections across all upstream hosts.
 - `upstream_http_max_idle_conns_per_host`: Max idle keep-alive connections per upstream host.
 - `upstream_http_max_conns_per_host`: Max total upstream connections per host (`0` means unlimited).
+- `upstream_http_protocol`: Upstream protocol mode (`auto`, `http1`, or `http2`). `auto` negotiates HTTP/2 when the upstream offers it; `http1` disables HTTP/2; `http2` rejects an HTTP/1.1 fallback.
 - `forward_response_headers`: Headers passed from the primary backend to the client.
 - `compare_mode`: Selection of the comparison engine (`nginx`, `header`, `json`, `html`).
 - `compare_json_strict`: Enables strict mode for JSON comparison.
@@ -119,6 +120,7 @@ upstream_http_response_header_timeout: "5s"
 upstream_http_max_idle_conns: 1024
 upstream_http_max_idle_conns_per_host: 256
 upstream_http_max_conns_per_host: 0
+upstream_http_protocol: auto
 
 # Comparison settings
 compare_mode: nginx # nginx, header, json, html

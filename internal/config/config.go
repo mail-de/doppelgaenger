@@ -42,6 +42,10 @@ const (
 	selectionRoundRobin   = "round_robin"
 	selectionSourceIPHash = "source_ip_hash"
 
+	upstreamHTTPProtocolAuto  = "auto"
+	upstreamHTTPProtocolHTTP1 = "http1"
+	upstreamHTTPProtocolHTTP2 = "http2"
+
 	headerAuthStatus       = "Auth-Status"
 	headerAuthServer       = "Auth-Server"
 	headerAuthPort         = "Auth-Port"
@@ -100,6 +104,10 @@ type Config struct {
 	// UpstreamHTTPMaxConnsPerHost caps total (active+idle+dialing) connections per upstream host.
 	// Applies to: HTTP protocol. 0 means unlimited.
 	UpstreamHTTPMaxConnsPerHost int `mapstructure:"upstream_http_max_conns_per_host"`
+
+	// UpstreamHTTPProtocol controls upstream protocol negotiation: auto, http1, or http2.
+	// Applies to: HTTP protocol.
+	UpstreamHTTPProtocol string `mapstructure:"upstream_http_protocol"`
 
 	// ListenAddr is the address the proxy listens on (e.g., ":8080").
 	// Applies to: HTTP protocol.
@@ -326,6 +334,7 @@ func setHTTPDefaults(v *viper.Viper) {
 	v.SetDefault("upstream_http_max_idle_conns", 1024)
 	v.SetDefault("upstream_http_max_idle_conns_per_host", 256)
 	v.SetDefault("upstream_http_max_conns_per_host", 0)
+	v.SetDefault("upstream_http_protocol", upstreamHTTPProtocolAuto)
 	v.SetDefault("path_rules", []PathRule{})
 }
 
@@ -419,7 +428,11 @@ func validate(cfg *Config) error {
 	cfg.ShadowSelectionMode = normalizeSelectionMode(cfg.ShadowSelectionMode)
 
 	normalizeShadowConfig(cfg)
-	normalizeHTTPTransportConfig(cfg)
+
+	if err := normalizeHTTPTransportConfig(cfg); err != nil {
+		return err
+	}
+
 	normalizeCompareConfig(cfg)
 	normalizeRuntimeConfig(cfg)
 
@@ -475,7 +488,7 @@ func normalizeShadowConfig(cfg *Config) {
 	}
 }
 
-func normalizeHTTPTransportConfig(cfg *Config) {
+func normalizeHTTPTransportConfig(cfg *Config) error {
 	if cfg.UpstreamHTTPDialTimeout <= 0 {
 		cfg.UpstreamHTTPDialTimeout = 2 * time.Second
 	}
@@ -499,6 +512,20 @@ func normalizeHTTPTransportConfig(cfg *Config) {
 	if cfg.UpstreamHTTPMaxConnsPerHost < 0 {
 		cfg.UpstreamHTTPMaxConnsPerHost = 0
 	}
+
+	protocol := strings.ToLower(strings.TrimSpace(cfg.UpstreamHTTPProtocol))
+	if protocol == "" {
+		protocol = upstreamHTTPProtocolAuto
+	}
+
+	switch protocol {
+	case upstreamHTTPProtocolAuto, upstreamHTTPProtocolHTTP1, upstreamHTTPProtocolHTTP2:
+		cfg.UpstreamHTTPProtocol = protocol
+	default:
+		return fmt.Errorf("invalid upstream_http_protocol: %s", cfg.UpstreamHTTPProtocol)
+	}
+
+	return nil
 }
 
 func normalizeCompareConfig(cfg *Config) {

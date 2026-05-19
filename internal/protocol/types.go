@@ -60,6 +60,7 @@ type Event struct {
 	PrimaryPath string
 	ShadowPath  string
 	RawQuery    string
+	Host        string
 	Header      http.Header
 	Body        []byte
 	RemoteAddr  string

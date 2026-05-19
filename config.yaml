@@ -129,6 +129,11 @@ upstream_http_max_idle_conns_per_host: 256
 # Applies to: HTTP protocol.
 upstream_http_max_conns_per_host: 0
 
+# upstream_http_protocol: upstream protocol mode (auto, http1, or http2).
+# auto negotiates HTTP/2 when available, http1 disables it, and http2 rejects HTTP/1.1 fallback.
+# Applies to: HTTP protocol.
+upstream_http_protocol: auto
+
 # Header & Comparison Settings
 # ------------------------------------------------------------------------------
 # forward_response_headers: headers passed from the primary backend to the client.

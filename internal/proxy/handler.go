@@ -103,6 +103,7 @@ type httpRequestContext struct {
 	method     string
 	path       string
 	rawQuery   string
+	host       string
 	remoteAddr string
 }
 
@@ -170,9 +171,7 @@ func (h *Handler) Handle(c *gin.Context) {
 
 	corrID, corrGenerated := h.ensureRequestID(hdr)
 
-	if hdr.Get("X-Forwarded-Proto") == "" {
-		hdr.Set("X-Forwarded-Proto", "https")
-	}
+	prepareForwardedHeaders(c.Request, hdr)
 
 	shadow := h.shouldShadow(c, pathDecision)
 	shadowEnabledLabel = observability.BoolLabel(shadow.doShadow)
@@ -204,6 +203,7 @@ func (h *Handler) newHTTPRequestContext(c *gin.Context) httpRequestContext {
 		method:     c.Request.Method,
 		path:       c.Param("path"),
 		rawQuery:   c.Request.URL.RawQuery,
+		host:       c.Request.Host,
 		remoteAddr: clientIP(c.Request),
 	}
 }
@@ -217,6 +217,7 @@ func (r httpRequestContext) event(ctx context.Context, hdr http.Header, body []b
 		PrimaryPath: primaryPath,
 		ShadowPath:  shadowPath,
 		RawQuery:    r.rawQuery,
+		Host:        r.host,
 		Header:      hdr,
 		Body:        body,
 		RemoteAddr:  r.remoteAddr,
@@ -822,6 +823,47 @@ func (h *Handler) ensureRequestID(header http.Header) (rid string, generated boo
 	return rid, true
 }
 
+func prepareForwardedHeaders(r *http.Request, header http.Header) {
+	headers.RemoveHopByHop(header)
+
+	if header.Get("X-Forwarded-Proto") == "" {
+		header.Set("X-Forwarded-Proto", requestScheme(r))
+	}
+
+	if header.Get("X-Forwarded-Host") == "" && r.Host != "" {
+		header.Set("X-Forwarded-Host", r.Host)
+	}
+
+	if peer := peerIP(r); peer != "" {
+		if existing := strings.TrimSpace(header.Get("X-Forwarded-For")); existing != "" {
+			header.Set("X-Forwarded-For", existing+", "+peer)
+		} else {
+			header.Set("X-Forwarded-For", peer)
+		}
+	}
+
+	if header.Get("X-Real-IP") == "" {
+		if client := clientIP(r); client != "" {
+			header.Set("X-Real-IP", client)
+		}
+	}
+}
+
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+
+	if scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); scheme != "" {
+		parts := strings.Split(scheme, ",")
+		if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+
+	return protocolHTTP
+}
+
 func clientIP(r *http.Request) string {
 	xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
 	if xff != "" {
@@ -837,4 +879,13 @@ func clientIP(r *http.Request) string {
 	}
 
 	return r.RemoteAddr
+}
+
+func peerIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+
+	return strings.TrimSpace(r.RemoteAddr)
 }

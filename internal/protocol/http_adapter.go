@@ -78,11 +78,14 @@ func (s *httpSession) Send(event Event) error {
 		headersToSend.Set(name, value)
 	}
 
+	headers.RemoveHopByHop(headersToSend)
+
 	item := backend.Request{
 		Kind:       s.kind,
 		Method:     event.Method,
 		Path:       path,
 		RawQuery:   event.RawQuery,
+		Host:       event.Host,
 		Header:     headersToSend,
 		Body:       event.Body,
 		RemoteAddr: event.RemoteAddr,

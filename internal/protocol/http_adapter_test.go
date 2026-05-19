@@ -13,8 +13,13 @@ const (
 	primaryPath   = "/p-rewrite"
 	shadowPath    = "/s-rewrite"
 	httpGetMethod = "GET"
+	anyPath       = "/any"
 	headerBackend = "X-Backend"
+	headerConn    = "Connection"
+	headerXHop    = "X-Hop"
+	headerXKeep   = "X-Keep"
 	valueIncoming = "incoming"
+	valueOK       = "ok"
 	valueYes      = "yes"
 )
 
@@ -40,6 +45,7 @@ func TestHTTPAdapterUsesMappedPaths(t *testing.T) {
 		PrimaryPath: primaryPath,
 		ShadowPath:  shadowPath,
 		Method:      httpGetMethod,
+		Host:        "login.example.test",
 		Header:      http.Header{},
 	}
 
@@ -55,6 +61,10 @@ func TestHTTPAdapterUsesMappedPaths(t *testing.T) {
 
 	if primaryRequester.lastItem.Path != primaryPath {
 		t.Errorf("expected primary path to be %q, got %q", primaryPath, primaryRequester.lastItem.Path)
+	}
+
+	if primaryRequester.lastItem.Host != event.Host {
+		t.Errorf("expected primary host to be %q, got %q", event.Host, primaryRequester.lastItem.Host)
 	}
 
 	// Test shadow session
@@ -101,7 +111,7 @@ func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
 	}
 
 	event := Event{
-		Path:   "/any",
+		Path:   anyPath,
 		Method: httpGetMethod,
 		Header: http.Header{headerBackend: {valueIncoming}, "X-Original": {"keep"}},
 	}
@@ -150,5 +160,41 @@ func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
 
 	if got := event.Header.Get(headerBackend); got != valueIncoming {
 		t.Fatalf("expected original event header to stay unchanged, got %q", got)
+	}
+}
+
+func TestHTTPAdapterRemovesHopByHopHeaders(t *testing.T) {
+	primaryRequester := &mockRequester{}
+	adapter := HTTPAdapter{PrimaryRequester: primaryRequester}
+
+	event := Event{
+		Path:   anyPath,
+		Method: httpGetMethod,
+		Header: http.Header{
+			headerConn:  {headerXHop},
+			headerXHop:  {"drop"},
+			headerXKeep: {valueOK},
+		},
+	}
+
+	ps, err := adapter.NewSession(context.Background(), TargetPrimary)
+	if err != nil {
+		t.Fatalf("failed to create primary session: %v", err)
+	}
+
+	if err := ps.Send(event); err != nil {
+		t.Fatalf("failed to send event to primary: %v", err)
+	}
+
+	if got := primaryRequester.lastItem.Header.Get(headerConn); got != "" {
+		t.Fatalf("expected Connection to be removed, got %q", got)
+	}
+
+	if got := primaryRequester.lastItem.Header.Get(headerXHop); got != "" {
+		t.Fatalf("expected X-Hop to be removed, got %q", got)
+	}
+
+	if got := primaryRequester.lastItem.Header.Get(headerXKeep); got != valueOK {
+		t.Fatalf("expected X-Keep to be preserved, got %q", got)
 	}
 }

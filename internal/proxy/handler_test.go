@@ -22,6 +22,7 @@ import (
 
 const (
 	testGlobalHeader    = "X-Global"
+	testInboundHost     = "example.com"
 	testHeadersRuleName = "headers"
 	testRuleHeader      = "X-Rule"
 )
@@ -314,6 +315,53 @@ func TestHandlePathRuleCompareHeadersExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestHandlePreparesReverseProxyHeaders(t *testing.T) {
+	harness := newRuntimeHarness(t, config.Config{ShadowSamplePercent: 0}, nil)
+
+	header := http.Header{}
+	header.Set("Connection", "X-Hop")
+	header.Set("X-Hop", "drop")
+	header.Set("X-Forwarded-For", "198.51.100.10")
+
+	w := performRuntimeRequest(t, harness.handler, http.MethodGet, testAuthPath, header)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	event, ok := harness.adapter.primaryEvent()
+	if !ok {
+		t.Fatalf("expected primary event to be captured")
+	}
+
+	if event.Host != testInboundHost {
+		t.Fatalf("expected inbound host to be preserved, got %q", event.Host)
+	}
+
+	if got := event.Header.Get("X-Forwarded-Host"); got != testInboundHost {
+		t.Fatalf("expected X-Forwarded-Host example.com, got %q", got)
+	}
+
+	if got := event.Header.Get("X-Forwarded-Proto"); got != protocolHTTP {
+		t.Fatalf("expected X-Forwarded-Proto http, got %q", got)
+	}
+
+	if got := event.Header.Get("X-Forwarded-For"); got != "198.51.100.10, 192.0.2.1" {
+		t.Fatalf("expected appended X-Forwarded-For, got %q", got)
+	}
+
+	if got := event.Header.Get("X-Real-IP"); got != "198.51.100.10" {
+		t.Fatalf("expected X-Real-IP from original client, got %q", got)
+	}
+
+	if got := event.Header.Get("Connection"); got != "" {
+		t.Fatalf("expected Connection header to be removed, got %q", got)
+	}
+
+	if got := event.Header.Get("X-Hop"); got != "" {
+		t.Fatalf("expected connection-listed header to be removed, got %q", got)
+	}
+}
+
 type staticLimiter struct {
 	allow bool
 }
@@ -506,6 +554,7 @@ type runtimeTestAdapter struct {
 
 	primaryResponse protocol.Response
 	shadowResponse  protocol.Response
+	primaryEvents   []protocol.Event
 	shadowSends     int
 }
 
@@ -536,13 +585,28 @@ func (a *runtimeTestAdapter) NewSession(ctx context.Context, target protocol.Tar
 	return &runtimeTestSession{adapter: a, target: target, ctx: ctx}, nil
 }
 
-func (a *runtimeTestAdapter) recordSend(target protocol.Target) {
+func (a *runtimeTestAdapter) recordEvent(target protocol.Target, event protocol.Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if target == protocol.TargetPrimary {
+		a.primaryEvents = append(a.primaryEvents, cloneProtocolEvent(event))
+	}
 
 	if target == protocol.TargetShadow {
 		a.shadowSends++
 	}
+}
+
+func (a *runtimeTestAdapter) primaryEvent() (protocol.Event, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(a.primaryEvents) == 0 {
+		return protocol.Event{}, false
+	}
+
+	return cloneProtocolEvent(a.primaryEvents[len(a.primaryEvents)-1]), true
 }
 
 func (a *runtimeTestAdapter) shadowSendCount() int {
@@ -558,8 +622,8 @@ type runtimeTestSession struct {
 	ctx     context.Context
 }
 
-func (s *runtimeTestSession) Send(_ protocol.Event) error {
-	s.adapter.recordSend(s.target)
+func (s *runtimeTestSession) Send(event protocol.Event) error {
+	s.adapter.recordEvent(s.target, event)
 
 	return nil
 }
@@ -587,4 +651,12 @@ func cloneProtocolResponse(response protocol.Response) protocol.Response {
 	response.Body = append([]byte(nil), response.Body...)
 
 	return response
+}
+
+func cloneProtocolEvent(event protocol.Event) protocol.Event {
+	event.Header = event.Header.Clone()
+	event.Body = append([]byte(nil), event.Body...)
+	event.Payload = append([]byte(nil), event.Payload...)
+
+	return event
 }

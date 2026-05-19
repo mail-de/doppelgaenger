@@ -41,6 +41,7 @@ func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.Adapter, error) {
 			MaxIdleConns:          deps.Config.UpstreamHTTPMaxIdleConns,
 			MaxIdleConnsPerHost:   deps.Config.UpstreamHTTPMaxIdleConnsPerHost,
 			MaxConnsPerHost:       deps.Config.UpstreamHTTPMaxConnsPerHost,
+			Protocol:              deps.Config.UpstreamHTTPProtocol,
 		}
 
 		return protocol.HTTPAdapter{
