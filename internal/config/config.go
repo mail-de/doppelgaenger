@@ -59,6 +59,8 @@ const (
 	headerPragma           = "Pragma"
 	headerExpires          = "Expires"
 	headerWWWAuthenticate  = "WWW-Authenticate"
+	headerContentEncoding  = "Content-Encoding"
+	headerVary             = "Vary"
 )
 
 // Config holds all configuration settings for the proxy.
@@ -388,6 +390,8 @@ func setHeaderDefaults(v *viper.Viper) {
 		headerPragma,
 		headerExpires,
 		headerWWWAuthenticate,
+		headerContentEncoding,
+		headerVary,
 	})
 	v.SetDefault("compare_headers", []string{
 		headerAuthStatus,

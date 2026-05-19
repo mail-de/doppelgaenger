@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"math/rand"
@@ -25,6 +26,8 @@ const (
 	testInboundHost     = "example.com"
 	testHeadersRuleName = "headers"
 	testRuleHeader      = "X-Rule"
+	testSkippedHeader   = "X-Skip"
+	testSkippedValue    = "skip"
 )
 
 func TestEnsureRequestIDPreservesHeader(t *testing.T) {
@@ -74,10 +77,10 @@ func TestWritePrimaryResponsePreservesRedirectHeaders(t *testing.T) {
 	response := protocol.Response{
 		Status: http.StatusFound,
 		Header: http.Header{
-			testAuthStatus: []string{testHeaderOK},
-			"Location":     []string{redirectLocation},
-			"Set-Cookie":   []string{redirectCookie},
-			"X-Skip":       []string{"skip"},
+			testAuthStatus:    []string{testHeaderOK},
+			"Location":        []string{redirectLocation},
+			"Set-Cookie":      []string{redirectCookie},
+			testSkippedHeader: []string{testSkippedValue},
 		},
 	}
 
@@ -102,8 +105,60 @@ func TestWritePrimaryResponsePreservesRedirectHeaders(t *testing.T) {
 		t.Fatalf("expected %s %q, got %q", testAuthStatus, testHeaderOK, got)
 	}
 
-	if got := rec.Header().Get("X-Skip"); got != "" {
-		t.Fatalf("expected X-Skip not to be forwarded, got %q", got)
+	if got := rec.Header().Get(testSkippedHeader); got != "" {
+		t.Fatalf("expected %s not to be forwarded, got %q", testSkippedHeader, got)
+	}
+}
+
+func TestWritePrimaryResponsePreservesCompressedResponseHeaders(t *testing.T) {
+	const (
+		contentEncoding = "Content-Encoding"
+		contentType     = "Content-Type"
+		vary            = "Vary"
+		brEncoding      = "br"
+		varyEncoding    = "Cookie, Accept-Encoding"
+	)
+
+	gin.SetMode(gin.TestMode)
+
+	body := []byte{0x1b, 0x35, 0x1e, 0x00, 0xc4, 0xff}
+	handler := &Handler{
+		cfg: config.Config{ForwardResponseHeaders: []string{contentEncoding, contentType, vary}},
+	}
+	response := protocol.Response{
+		Status: http.StatusOK,
+		Header: http.Header{
+			contentEncoding:   []string{brEncoding},
+			contentType:       []string{"text/html; charset=utf-8"},
+			vary:              []string{varyEncoding},
+			testSkippedHeader: []string{testSkippedValue},
+		},
+		Body: body,
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	handler.writePrimaryResponse(c, "request-id", response)
+
+	if got := c.Writer.Status(); got != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", got)
+	}
+
+	if got := rec.Header().Get(contentEncoding); got != brEncoding {
+		t.Fatalf("expected %s br, got %q", contentEncoding, got)
+	}
+
+	if got := rec.Header().Get(vary); got != varyEncoding {
+		t.Fatalf("expected %s to be preserved, got %q", vary, got)
+	}
+
+	if got := rec.Body.Bytes(); !bytes.Equal(got, body) {
+		t.Fatalf("expected compressed body bytes %#v, got %#v", body, got)
+	}
+
+	if got := rec.Header().Get(testSkippedHeader); got != "" {
+		t.Fatalf("expected %s not to be forwarded, got %q", testSkippedHeader, got)
 	}
 }
 

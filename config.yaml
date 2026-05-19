@@ -155,6 +155,8 @@ forward_response_headers:
   - "Pragma"
   - "Expires"
   - "WWW-Authenticate"
+  - "Content-Encoding"
+  - "Vary"
 
 # compare_headers: list of headers compared between primary and shadow.
 # Applies to: All protocols (if applicable).

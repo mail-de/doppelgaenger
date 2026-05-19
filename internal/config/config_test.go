@@ -150,6 +150,8 @@ func assertHTTPDefaults(t *testing.T, loaded Config) {
 		headerPragma,
 		headerExpires,
 		headerWWWAuthenticate,
+		headerContentEncoding,
+		headerVary,
 	} {
 		if !slices.Contains(loaded.ForwardResponseHeaders, header) {
 			t.Fatalf("expected default forward_response_headers to include %s, got %#v", header, loaded.ForwardResponseHeaders)
