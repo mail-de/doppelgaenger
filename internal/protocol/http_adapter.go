@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"doppelgaenger/internal/backend"
 	"doppelgaenger/internal/headers"
@@ -74,8 +75,13 @@ func (s *httpSession) Send(event Event) error {
 	}
 
 	headersToSend := headers.Clone(event.Header)
-	for name, value := range s.configuredRequestHeaders {
-		headersToSend.Set(name, value)
+	applyRequestHeaders(headersToSend, s.configuredRequestHeaders)
+
+	switch s.kind {
+	case backend.BackendPrimary:
+		applyRequestHeaders(headersToSend, event.PrimaryRequestHeaders)
+	case backend.BackendShadow:
+		applyRequestHeaders(headersToSend, event.ShadowRequestHeaders)
 	}
 
 	headers.RemoveHopByHop(headersToSend)
@@ -120,4 +126,10 @@ func (s *httpSession) Receive() (Response, error) {
 
 func (s *httpSession) Close() error {
 	return nil
+}
+
+func applyRequestHeaders(header http.Header, values map[string]string) {
+	for name, value := range values {
+		header.Set(name, value)
+	}
 }

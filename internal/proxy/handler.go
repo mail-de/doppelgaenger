@@ -179,7 +179,7 @@ func (h *Handler) Handle(c *gin.Context) {
 	shadowEnabledLabel = observability.BoolLabel(shadow.doShadow)
 	comparison := h.resolveComparison(pathDecision, shadow)
 
-	event := request.event(requestCtx, hdr, body, primaryPath, shadowPath)
+	event := request.event(requestCtx, hdr, body, primaryPath, shadowPath, pathDecision.PrimaryRequestHeaders, pathDecision.ShadowRequestHeaders)
 
 	primaryRes, ok := h.callPrimary(c, event, request, traceID, corrID, &outcome, &spanErr)
 	if !ok {
@@ -210,20 +210,22 @@ func (h *Handler) newHTTPRequestContext(c *gin.Context) httpRequestContext {
 	}
 }
 
-func (r httpRequestContext) event(ctx context.Context, hdr http.Header, body []byte, primaryPath, shadowPath string) protocol.Event {
+func (r httpRequestContext) event(ctx context.Context, hdr http.Header, body []byte, primaryPath, shadowPath string, primaryRequestHeaders, shadowRequestHeaders map[string]string) protocol.Event {
 	return protocol.Event{
-		Ctx:         ctx,
-		Kind:        protocolHTTP,
-		Method:      r.method,
-		Path:        r.path,
-		PrimaryPath: primaryPath,
-		ShadowPath:  shadowPath,
-		RawQuery:    r.rawQuery,
-		Host:        r.host,
-		Header:      hdr,
-		Body:        body,
-		RemoteAddr:  r.remoteAddr,
-		RequestID:   r.reqID,
+		Ctx:                   ctx,
+		Kind:                  protocolHTTP,
+		Method:                r.method,
+		Path:                  r.path,
+		PrimaryPath:           primaryPath,
+		ShadowPath:            shadowPath,
+		RawQuery:              r.rawQuery,
+		Host:                  r.host,
+		Header:                hdr,
+		Body:                  body,
+		RemoteAddr:            r.remoteAddr,
+		RequestID:             r.reqID,
+		PrimaryRequestHeaders: cloneStringMap(primaryRequestHeaders),
+		ShadowRequestHeaders:  cloneStringMap(shadowRequestHeaders),
 	}
 }
 
@@ -816,6 +818,19 @@ func (h *Handler) randInt63() int64 {
 	defer h.randMu.Unlock()
 
 	return h.rng.Int63()
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+
+	return cloned
 }
 
 func (h *Handler) ensureRequestID(header http.Header) (rid string, generated bool) {

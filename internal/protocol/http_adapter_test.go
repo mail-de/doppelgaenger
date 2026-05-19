@@ -9,18 +9,24 @@ import (
 )
 
 const (
-	originalPath  = "/original"
-	primaryPath   = "/p-rewrite"
-	shadowPath    = "/s-rewrite"
-	httpGetMethod = "GET"
-	anyPath       = "/any"
-	headerBackend = "X-Backend"
-	headerConn    = "Connection"
-	headerXHop    = "X-Hop"
-	headerXKeep   = "X-Keep"
-	valueIncoming = "incoming"
-	valueOK       = "ok"
-	valueYes      = "yes"
+	originalPath        = "/original"
+	primaryPath         = "/p-rewrite"
+	shadowPath          = "/s-rewrite"
+	httpGetMethod       = "GET"
+	anyPath             = "/any"
+	headerBackend       = "X-Backend"
+	headerAuthorization = "Authorization"
+	headerConn          = "Connection"
+	headerMetricsRoute  = "X-Metrics-Route"
+	headerXHop          = "X-Hop"
+	headerXKeep         = "X-Keep"
+	valueBasicGlobal    = "Basic global-secret"
+	valueBasicIncoming  = "Basic incoming-secret"
+	valueBasicPrimary   = "Basic primary-secret"
+	valueBasicShadow    = "Basic shadow-secret"
+	valueIncoming       = "incoming"
+	valueOK             = "ok"
+	valueYes            = "yes"
 )
 
 type mockRequester struct {
@@ -160,6 +166,89 @@ func TestHTTPAdapterAddsConfiguredHeadersPerTarget(t *testing.T) {
 
 	if got := event.Header.Get(headerBackend); got != valueIncoming {
 		t.Fatalf("expected original event header to stay unchanged, got %q", got)
+	}
+}
+
+func TestHTTPAdapterAppliesRuleHeadersAfterGlobalHeaders(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   Target
+		wantAuth string
+	}{
+		{name: "primary", target: TargetPrimary, wantAuth: valueBasicPrimary},
+		{name: "shadow", target: TargetShadow, wantAuth: valueBasicShadow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requester := &mockRequester{}
+			adapter := adapterWithGlobalHeaders(tt.target, requester)
+			event := eventWithRuleHeaders(tt.target, tt.wantAuth)
+
+			mustSendEvent(t, adapter, tt.target, event)
+
+			if got := requester.lastItem.Header.Get(headerAuthorization); got != tt.wantAuth {
+				t.Fatalf("expected path rule Authorization to override global %s header, got %q", tt.target, got)
+			}
+
+			if got := requester.lastItem.Header.Get(headerBackend); got != string(tt.target) {
+				t.Fatalf("expected global %s header to remain, got %q", tt.target, got)
+			}
+
+			if got := requester.lastItem.Header.Get(headerMetricsRoute); got != valueYes {
+				t.Fatalf("expected path rule %s header, got %q", tt.target, got)
+			}
+		})
+	}
+}
+
+func adapterWithGlobalHeaders(target Target, requester *mockRequester) HTTPAdapter {
+	configuredHeaders := map[string]string{
+		headerAuthorization: valueBasicGlobal,
+		headerBackend:       string(target),
+	}
+
+	if target == TargetPrimary {
+		return HTTPAdapter{PrimaryRequester: requester, PrimaryRequestHeaders: configuredHeaders}
+	}
+
+	return HTTPAdapter{ShadowRequester: requester, ShadowRequestHeaders: configuredHeaders}
+}
+
+func eventWithRuleHeaders(target Target, authValue string) Event {
+	event := Event{
+		Path:   anyPath,
+		Method: httpGetMethod,
+		Header: http.Header{
+			headerAuthorization: {valueBasicIncoming},
+			headerBackend:       {valueIncoming},
+		},
+	}
+
+	configuredHeaders := map[string]string{
+		headerAuthorization: authValue,
+		headerMetricsRoute:  valueYes,
+	}
+
+	if target == TargetPrimary {
+		event.PrimaryRequestHeaders = configuredHeaders
+	} else {
+		event.ShadowRequestHeaders = configuredHeaders
+	}
+
+	return event
+}
+
+func mustSendEvent(t *testing.T, adapter HTTPAdapter, target Target, event Event) {
+	t.Helper()
+
+	session, err := adapter.NewSession(context.Background(), target)
+	if err != nil {
+		t.Fatalf("failed to create %s session: %v", target, err)
+	}
+
+	if err := session.Send(event); err != nil {
+		t.Fatalf("failed to send event to %s: %v", target, err)
 	}
 }
 

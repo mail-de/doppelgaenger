@@ -82,10 +82,12 @@ shadow_sample_percent: 5
 shadow_force_header: "X-Shadow"
 
 # primary_request_headers: optional static headers added to requests sent to primary.
+# path_rules[].primary_request_headers can override these values per matched path.
 # Applies to: HTTP protocol.
 primary_request_headers: {}
 
 # shadow_request_headers: optional static headers added to requests sent to shadow.
+# path_rules[].shadow_request_headers can override these values per matched path.
 # Applies to: HTTP protocol.
 shadow_request_headers: {}
 
@@ -199,6 +201,10 @@ path_rules: []
 #     compare_headers:
 #       - "Content-Type"
 #       - "X-Api-Status"
+#     primary_request_headers:
+#       X-Route-Backend: json-primary
+#     shadow_request_headers:
+#       X-Route-Backend: json-shadow
 #
 #   - name: metrics-health
 #     match: "^/(metrics|healthz)$"

@@ -53,20 +53,22 @@ type ActionDiff struct {
 
 // Event describes one proxy event passed through a protocol runner.
 type Event struct {
-	Ctx         context.Context
-	Kind        string
-	Method      string
-	Path        string
-	PrimaryPath string
-	ShadowPath  string
-	RawQuery    string
-	Host        string
-	Header      http.Header
-	Body        []byte
-	RemoteAddr  string
-	RequestID   uint64
-	Payload     []byte
-	Meta        map[string]string
+	Ctx                   context.Context
+	Kind                  string
+	Method                string
+	Path                  string
+	PrimaryPath           string
+	ShadowPath            string
+	RawQuery              string
+	Host                  string
+	Header                http.Header
+	Body                  []byte
+	RemoteAddr            string
+	RequestID             uint64
+	PrimaryRequestHeaders map[string]string
+	ShadowRequestHeaders  map[string]string
+	Payload               []byte
+	Meta                  map[string]string
 }
 
 // Response describes one primary or shadow protocol response.

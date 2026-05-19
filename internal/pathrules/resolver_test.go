@@ -12,8 +12,14 @@ const (
 	resolverRuleFirst       = "first"
 	resolverRuleAll         = "all"
 	resolverRuleAPI         = "api"
+	resolverRuleMetrics     = "metrics"
 	resolverRulePost        = "post"
 	resolverHeaderAuthState = "Auth-Status"
+	resolverHeaderAuth      = "Authorization"
+	resolverMetricsMatch    = "^/metrics$"
+	resolverMetricsPath     = "/metrics"
+	resolverBasicSecret     = "Basic metrics-secret"
+	resolverMutatedValue    = "mutated"
 )
 
 func TestResolverFirstMatchingRuleWins(t *testing.T) {
@@ -116,10 +122,10 @@ func TestResolverNoRulesUsesGlobalBehavior(t *testing.T) {
 
 func TestResolverShadowNeverCarriesPathRuleSkipReason(t *testing.T) {
 	resolver := mustResolver(t, []config.PathRule{
-		{Name: "metrics", Match: "^/metrics$", Shadow: string(ShadowModeNever)},
+		{Name: resolverRuleMetrics, Match: resolverMetricsMatch, Shadow: string(ShadowModeNever)},
 	})
 
-	decision := resolver.Resolve(http.MethodGet, "/metrics")
+	decision := resolver.Resolve(http.MethodGet, resolverMetricsPath)
 	if decision.ShadowMode != ShadowModeNever {
 		t.Fatalf("expected shadow never, got %q", decision.ShadowMode)
 	}
@@ -173,6 +179,38 @@ func TestResolverPreservesCompareHeaders(t *testing.T) {
 
 	if len(decision.CompareHeaders) != 1 || decision.CompareHeaders[0] != resolverHeaderAuthState {
 		t.Fatalf("expected compare headers to be preserved, got %#v", decision.CompareHeaders)
+	}
+}
+
+func TestResolverPreservesRequestHeaders(t *testing.T) {
+	resolver := mustResolver(t, []config.PathRule{
+		{
+			Name:                  resolverRuleMetrics,
+			Match:                 resolverMetricsMatch,
+			PrimaryRequestHeaders: map[string]string{resolverHeaderAuth: resolverBasicSecret},
+			ShadowRequestHeaders:  map[string]string{resolverHeaderAuth: resolverBasicSecret},
+		},
+	})
+
+	decision := resolver.Resolve(http.MethodGet, resolverMetricsPath)
+	if decision.PrimaryRequestHeaders[resolverHeaderAuth] != resolverBasicSecret {
+		t.Fatalf("expected primary request headers to be preserved, got %#v", decision.PrimaryRequestHeaders)
+	}
+
+	if decision.ShadowRequestHeaders[resolverHeaderAuth] != resolverBasicSecret {
+		t.Fatalf("expected shadow request headers to be preserved, got %#v", decision.ShadowRequestHeaders)
+	}
+
+	decision.PrimaryRequestHeaders[resolverHeaderAuth] = resolverMutatedValue
+	decision.ShadowRequestHeaders[resolverHeaderAuth] = resolverMutatedValue
+
+	next := resolver.Resolve(http.MethodGet, resolverMetricsPath)
+	if next.PrimaryRequestHeaders[resolverHeaderAuth] != resolverBasicSecret {
+		t.Fatalf("expected resolver to return cloned primary request headers, got %#v", next.PrimaryRequestHeaders)
+	}
+
+	if next.ShadowRequestHeaders[resolverHeaderAuth] != resolverBasicSecret {
+		t.Fatalf("expected resolver to return cloned shadow request headers, got %#v", next.ShadowRequestHeaders)
 	}
 }
 

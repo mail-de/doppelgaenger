@@ -8,7 +8,14 @@ import (
 	"time"
 )
 
-const pathRuleTestMethodPost = "POST"
+const (
+	pathRuleTestMethodPost  = "POST"
+	pathRuleTestAuthMatch   = "^/api/v1/auth/json$"
+	pathRuleTestAuthHeader  = "Authorization"
+	pathRuleTestPrimaryAuth = "Basic primary-token"
+	pathRuleTestShadowAuth  = "Basic metrics-token"
+	pathRuleTestRouteValue  = "metrics"
+)
 
 func TestLoadReadsConfigFile(t *testing.T) {
 	loaded := loadTestConfig(t, []byte(`
@@ -231,6 +238,12 @@ path_rules:
     compare_headers:
       - auth-status
       - Auth-Error
+    primary_request_headers:
+      authorization: "Basic primary-token"
+      X-Primary-Route: "metrics"
+    shadow_request_headers:
+      authorization: "Basic metrics-token"
+      X-Shadow-Route: "metrics"
 `))
 
 	if len(loaded.PathRules) != 1 {
@@ -238,6 +251,14 @@ path_rules:
 	}
 
 	rule := loaded.PathRules[0]
+	assertLoadedPathRuleBasics(t, rule)
+	assertLoadedPathRuleCompareHeaders(t, rule)
+	assertLoadedPathRuleRequestHeaders(t, rule)
+}
+
+func assertLoadedPathRuleBasics(t *testing.T, rule PathRule) {
+	t.Helper()
+
 	if rule.Name != "auth-json" {
 		t.Fatalf("expected trimmed path rule name, got %q", rule.Name)
 	}
@@ -246,7 +267,7 @@ path_rules:
 		t.Fatalf("expected method %s, got %#v", pathRuleTestMethodPost, rule.Methods)
 	}
 
-	if rule.Match != "^/api/v1/auth/json$" {
+	if rule.Match != pathRuleTestAuthMatch {
 		t.Fatalf("expected match regex to load, got %q", rule.Match)
 	}
 
@@ -261,6 +282,10 @@ path_rules:
 	if rule.CompareMode != compareModeJSON {
 		t.Fatalf("expected compare mode json, got %q", rule.CompareMode)
 	}
+}
+
+func assertLoadedPathRuleCompareHeaders(t *testing.T, rule PathRule) {
+	t.Helper()
 
 	expectedHeaders := []string{"Auth-Status", "Auth-Error"}
 	if len(rule.CompareHeaders) != len(expectedHeaders) {
@@ -271,6 +296,26 @@ path_rules:
 		if rule.CompareHeaders[i] != expected {
 			t.Fatalf("expected compare header %d to be %q, got %q", i, expected, rule.CompareHeaders[i])
 		}
+	}
+}
+
+func assertLoadedPathRuleRequestHeaders(t *testing.T, rule PathRule) {
+	t.Helper()
+
+	if rule.PrimaryRequestHeaders[pathRuleTestAuthHeader] != pathRuleTestPrimaryAuth {
+		t.Fatalf("expected canonical Authorization primary request header, got %#v", rule.PrimaryRequestHeaders)
+	}
+
+	if rule.PrimaryRequestHeaders["X-Primary-Route"] != pathRuleTestRouteValue {
+		t.Fatalf("expected X-Primary-Route primary request header, got %#v", rule.PrimaryRequestHeaders)
+	}
+
+	if rule.ShadowRequestHeaders[pathRuleTestAuthHeader] != pathRuleTestShadowAuth {
+		t.Fatalf("expected canonical Authorization shadow request header, got %#v", rule.ShadowRequestHeaders)
+	}
+
+	if rule.ShadowRequestHeaders["X-Shadow-Route"] != pathRuleTestRouteValue {
+		t.Fatalf("expected X-Shadow-Route shadow request header, got %#v", rule.ShadowRequestHeaders)
 	}
 }
 
@@ -335,12 +380,40 @@ path_rules:
     match: "^/api$"
 `,
 		},
+	}
+
+	assertPathRuleLoadFailures(t, tests)
+}
+
+func TestLoadPathRulesRejectsInvalidRuleHeaders(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
 		{
 			name: "invalid compare header",
 			yaml: `
 path_rules:
   - match: "^/api$"
     compare_headers: ["bad header"]
+`,
+		},
+		{
+			name: "invalid shadow request header",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    shadow_request_headers:
+      "bad header": value
+`,
+		},
+		{
+			name: "invalid primary request header",
+			yaml: `
+path_rules:
+  - match: "^/api$"
+    primary_request_headers:
+      "bad header": value
 `,
 		},
 	}

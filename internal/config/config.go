@@ -226,13 +226,15 @@ type Config struct {
 
 // PathRule describes a path-specific HTTP shadow and comparison rule.
 type PathRule struct {
-	Name           string   `mapstructure:"name"`
-	Methods        []string `mapstructure:"methods"`
-	Match          string   `mapstructure:"match"`
-	Shadow         string   `mapstructure:"shadow"`
-	Compare        string   `mapstructure:"compare"`
-	CompareMode    string   `mapstructure:"compare_mode"`
-	CompareHeaders []string `mapstructure:"compare_headers"`
+	Name                  string            `mapstructure:"name"`
+	Methods               []string          `mapstructure:"methods"`
+	Match                 string            `mapstructure:"match"`
+	Shadow                string            `mapstructure:"shadow"`
+	Compare               string            `mapstructure:"compare"`
+	CompareMode           string            `mapstructure:"compare_mode"`
+	CompareHeaders        []string          `mapstructure:"compare_headers"`
+	PrimaryRequestHeaders map[string]string `mapstructure:"primary_request_headers"`
+	ShadowRequestHeaders  map[string]string `mapstructure:"shadow_request_headers"`
 }
 
 // ObservabilityConfig contains all opt-in metrics and tracing settings.
@@ -584,49 +586,68 @@ func validatePathRules(cfg *Config) error {
 	}
 
 	for i := range cfg.PathRules {
-		rule := &cfg.PathRules[i]
-
-		rule.Name = strings.TrimSpace(rule.Name)
-		rule.Match = strings.TrimSpace(rule.Match)
-
-		if rule.Match == "" {
-			return fmt.Errorf("path_rules[%d].match is required", i)
+		if err := validatePathRule(&cfg.PathRules[i], i); err != nil {
+			return err
 		}
+	}
 
-		if _, err := regexp.Compile(rule.Match); err != nil {
-			return fmt.Errorf("path_rules[%d].match is invalid: %w", i, err)
-		}
+	return nil
+}
 
-		methods, err := normalizePathRuleMethods(rule.Methods)
-		if err != nil {
-			return fmt.Errorf("path_rules[%d].methods: %w", i, err)
-		}
+func validatePathRule(rule *PathRule, index int) error {
+	rule.Name = strings.TrimSpace(rule.Name)
+	rule.Match = strings.TrimSpace(rule.Match)
 
-		shadow, err := normalizePathRuleShadow(rule.Shadow)
-		if err != nil {
-			return fmt.Errorf("path_rules[%d].shadow: %w", i, err)
-		}
+	if rule.Match == "" {
+		return fmt.Errorf("path_rules[%d].match is required", index)
+	}
 
-		compare, err := normalizePathRuleCompare(rule.Compare)
-		if err != nil {
-			return fmt.Errorf("path_rules[%d].compare: %w", i, err)
-		}
+	if _, err := regexp.Compile(rule.Match); err != nil {
+		return fmt.Errorf("path_rules[%d].match is invalid: %w", index, err)
+	}
 
-		compareMode, err := normalizePathRuleCompareMode(rule.CompareMode)
-		if err != nil {
-			return fmt.Errorf("path_rules[%d].compare_mode: %w", i, err)
-		}
+	if err := normalizePathRuleModes(rule, index); err != nil {
+		return err
+	}
 
-		compareHeaders, err := normalizeHTTPHeaderNames(rule.CompareHeaders)
-		if err != nil {
-			return fmt.Errorf("path_rules[%d].compare_headers: %w", i, err)
-		}
+	return normalizePathRuleHeaders(rule, index)
+}
 
-		rule.Methods = methods
-		rule.Shadow = shadow
-		rule.Compare = compare
-		rule.CompareMode = compareMode
-		rule.CompareHeaders = compareHeaders
+func normalizePathRuleModes(rule *PathRule, index int) error {
+	var err error
+
+	if rule.Methods, err = normalizePathRuleMethods(rule.Methods); err != nil {
+		return fmt.Errorf("path_rules[%d].methods: %w", index, err)
+	}
+
+	if rule.Shadow, err = normalizePathRuleShadow(rule.Shadow); err != nil {
+		return fmt.Errorf("path_rules[%d].shadow: %w", index, err)
+	}
+
+	if rule.Compare, err = normalizePathRuleCompare(rule.Compare); err != nil {
+		return fmt.Errorf("path_rules[%d].compare: %w", index, err)
+	}
+
+	if rule.CompareMode, err = normalizePathRuleCompareMode(rule.CompareMode); err != nil {
+		return fmt.Errorf("path_rules[%d].compare_mode: %w", index, err)
+	}
+
+	return nil
+}
+
+func normalizePathRuleHeaders(rule *PathRule, index int) error {
+	var err error
+
+	if rule.CompareHeaders, err = normalizeHTTPHeaderNames(rule.CompareHeaders); err != nil {
+		return fmt.Errorf("path_rules[%d].compare_headers: %w", index, err)
+	}
+
+	if rule.PrimaryRequestHeaders, err = normalizeHTTPHeaderMap(rule.PrimaryRequestHeaders); err != nil {
+		return fmt.Errorf("path_rules[%d].primary_request_headers: %w", index, err)
+	}
+
+	if rule.ShadowRequestHeaders, err = normalizeHTTPHeaderMap(rule.ShadowRequestHeaders); err != nil {
+		return fmt.Errorf("path_rules[%d].shadow_request_headers: %w", index, err)
 	}
 
 	return nil
@@ -699,6 +720,30 @@ func normalizeHTTPHeaderNames(names []string) ([]string, error) {
 		}
 
 		normalized = append(normalized, canonical)
+	}
+
+	return normalized, nil
+}
+
+func normalizeHTTPHeaderMap(values map[string]string) (map[string]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+
+	normalized := make(map[string]string, len(values))
+	for raw, value := range values {
+		name := strings.TrimSpace(raw)
+		canonical := http.CanonicalHeaderKey(name)
+
+		if canonical == "" || !httpguts.ValidHeaderFieldName(canonical) {
+			return nil, fmt.Errorf("invalid HTTP header name %q", raw)
+		}
+
+		if _, exists := normalized[canonical]; exists {
+			return nil, fmt.Errorf("duplicate HTTP header name %q", canonical)
+		}
+
+		normalized[canonical] = value
 	}
 
 	return normalized, nil

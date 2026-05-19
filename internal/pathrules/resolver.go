@@ -44,14 +44,16 @@ const (
 
 // Decision is the deterministic policy result for one HTTP method and path.
 type Decision struct {
-	RuleName          string
-	ShadowMode        ShadowMode
-	CompareDecision   CompareDecision
-	CompareMode       string
-	CompareHeaders    []string
-	CompareHeadersSet bool
-	ShadowSkipReason  string
-	CompareSkipReason string
+	RuleName              string
+	ShadowMode            ShadowMode
+	CompareDecision       CompareDecision
+	CompareMode           string
+	CompareHeaders        []string
+	CompareHeadersSet     bool
+	PrimaryRequestHeaders map[string]string
+	ShadowRequestHeaders  map[string]string
+	ShadowSkipReason      string
+	CompareSkipReason     string
 }
 
 // Resolver resolves the first configured path rule matching an HTTP method and inbound path.
@@ -60,14 +62,16 @@ type Resolver struct {
 }
 
 type compiledRule struct {
-	name              string
-	methods           map[string]struct{}
-	pattern           *regexp.Regexp
-	shadow            ShadowMode
-	compare           CompareDecision
-	compareMode       string
-	compareHeaders    []string
-	compareHeadersSet bool
+	name                  string
+	methods               map[string]struct{}
+	pattern               *regexp.Regexp
+	shadow                ShadowMode
+	compare               CompareDecision
+	compareMode           string
+	compareHeaders        []string
+	compareHeadersSet     bool
+	primaryRequestHeaders map[string]string
+	shadowRequestHeaders  map[string]string
 }
 
 // NewResolver compiles path rule regular expressions once for deterministic request-time lookup.
@@ -80,14 +84,16 @@ func NewResolver(rules []config.PathRule) (*Resolver, error) {
 		}
 
 		compiled = append(compiled, compiledRule{
-			name:              pathRuleName(i, rule.Name),
-			methods:           compileMethods(rule.Methods),
-			pattern:           pattern,
-			shadow:            shadowMode(rule.Shadow),
-			compare:           compareDecision(rule.Compare),
-			compareMode:       strings.TrimSpace(rule.CompareMode),
-			compareHeaders:    cloneStrings(rule.CompareHeaders),
-			compareHeadersSet: rule.CompareHeaders != nil,
+			name:                  pathRuleName(i, rule.Name),
+			methods:               compileMethods(rule.Methods),
+			pattern:               pattern,
+			shadow:                shadowMode(rule.Shadow),
+			compare:               compareDecision(rule.Compare),
+			compareMode:           strings.TrimSpace(rule.CompareMode),
+			compareHeaders:        cloneStrings(rule.CompareHeaders),
+			compareHeadersSet:     rule.CompareHeaders != nil,
+			primaryRequestHeaders: cloneStringMap(rule.PrimaryRequestHeaders),
+			shadowRequestHeaders:  cloneStringMap(rule.ShadowRequestHeaders),
 		})
 	}
 
@@ -132,12 +138,14 @@ func (r compiledRule) matchesMethod(method string) bool {
 
 func (r compiledRule) decision() Decision {
 	decision := Decision{
-		RuleName:          r.name,
-		ShadowMode:        r.shadow,
-		CompareDecision:   r.compare,
-		CompareMode:       r.compareMode,
-		CompareHeaders:    cloneStrings(r.compareHeaders),
-		CompareHeadersSet: r.compareHeadersSet,
+		RuleName:              r.name,
+		ShadowMode:            r.shadow,
+		CompareDecision:       r.compare,
+		CompareMode:           r.compareMode,
+		CompareHeaders:        cloneStrings(r.compareHeaders),
+		CompareHeadersSet:     r.compareHeadersSet,
+		PrimaryRequestHeaders: cloneStringMap(r.primaryRequestHeaders),
+		ShadowRequestHeaders:  cloneStringMap(r.shadowRequestHeaders),
 	}
 
 	if decision.ShadowMode == ShadowModeNever {
@@ -205,6 +213,19 @@ func cloneStrings(values []string) []string {
 
 	cloned := make([]string, len(values))
 	copy(cloned, values)
+
+	return cloned
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
 
 	return cloned
 }

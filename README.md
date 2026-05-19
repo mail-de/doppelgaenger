@@ -46,8 +46,8 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `shadow_selection_mode`: Shadow selection strategy (`round_robin` or `source_ip_hash`).
 - `shadow_timeout`: Time limit for requests to the shadow backend.
 - `shadow_force_header`: Header that forces shadowing for the current request.
-- `primary_request_headers`: Optional static request headers added only to primary backend requests.
-- `shadow_request_headers`: Optional static request headers added only to shadow backend requests.
+- `primary_request_headers`: Optional static request headers added only to primary backend requests; `path_rules[].primary_request_headers` can override them for matched primary calls.
+- `shadow_request_headers`: Optional static request headers added only to shadow backend requests; `path_rules[].shadow_request_headers` can override them for matched shadow calls.
 - `max_backend_body_bytes`: Maximum request body size forwarded to backends.
 - `upstream_http_dial_timeout`: Timeout for establishing upstream TCP connections.
 - `upstream_http_tls_handshake_timeout`: Timeout for upstream TLS handshakes.
@@ -166,6 +166,10 @@ path_rules: []
 #     compare_headers:
 #       - "Content-Type"
 #       - "X-Api-Status"
+#     primary_request_headers:
+#       X-Route-Backend: json-primary
+#     shadow_request_headers:
+#       X-Route-Backend: json-shadow
 #
 #   - name: metrics-health
 #     match: "^/(metrics|healthz)$"
@@ -249,6 +253,13 @@ Rule fields:
 - `compare_headers`: Optional per-rule response header list. If omitted, the
   global `compare_headers` list is used. If explicitly set to `[]`, no headers
   are compared for that rule.
+- `primary_request_headers`: Optional per-rule request header overlay for
+  primary backend calls. Values are applied after global
+  `primary_request_headers`, so a matched rule can override headers such as
+  `Authorization` for one endpoint.
+- `shadow_request_headers`: Optional per-rule request header overlay for shadow
+  backend calls. Values are applied after global `shadow_request_headers`, so a
+  matched rule can override headers such as `Authorization` for one endpoint.
 
 Supported `shadow` values:
 
@@ -303,9 +314,9 @@ log_json: true
 ## How It Works
 
 1. **Request Arrival**: The proxy receives an HTTP(S) request.
-2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. The response from that backend is returned to the client.
+2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. Per-rule `primary_request_headers` override global primary headers when present. The response from that backend is returned to the client.
 3. **Shadow Decision**: Based on the first matching `path_rules` entry, or on global `shadow_sample_percent` and `shadow_force_header` when no rules are configured, the proxy decides whether to shadow the request.
-4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path.
+4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path. Per-rule `shadow_request_headers` override global shadow headers when present.
 5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on the resolved path rule or the global comparison settings.
 6. **Observability & Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found. When tracing is active, outgoing HTTP primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID header.
 

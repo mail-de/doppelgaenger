@@ -28,6 +28,10 @@ const (
 	testRuleHeader      = "X-Rule"
 	testSkippedHeader   = "X-Skip"
 	testSkippedValue    = "skip"
+	testAuthorization   = "Authorization"
+	testBasicPrimary    = "Basic primary-secret"
+	testBasicShadow     = "Basic shadow-secret"
+	testMetricsRegex    = "^/metrics$"
 )
 
 func TestEnsureRequestIDPreservesHeader(t *testing.T) {
@@ -417,6 +421,48 @@ func TestHandlePathRuleCompareHeadersExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleAddsPathRuleRequestHeadersToBackendEvents(t *testing.T) {
+	harness := newRuntimeHarness(t, config.Config{
+		ShadowSamplePercent: 100,
+		CompareMode:         compare.ModeNginx,
+		PathRules: []config.PathRule{
+			{
+				Name:                  "metrics",
+				Match:                 testMetricsRegex,
+				Shadow:                string(pathrules.ShadowModeAlways),
+				Compare:               string(pathrules.CompareDecisionOff),
+				PrimaryRequestHeaders: map[string]string{testAuthorization: testBasicPrimary},
+				ShadowRequestHeaders:  map[string]string{testAuthorization: testBasicShadow},
+			},
+		},
+	}, nil)
+
+	w := performRuntimeRequest(t, harness.handler, http.MethodGet, "/metrics", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	waitForRuntimeLog(t, harness.logs)
+
+	primaryEvent, ok := harness.adapter.primaryEvent()
+	if !ok {
+		t.Fatalf("expected primary event to be recorded")
+	}
+
+	if primaryEvent.PrimaryRequestHeaders[testAuthorization] != testBasicPrimary {
+		t.Fatalf("expected path rule primary request headers on primary event, got %#v", primaryEvent.PrimaryRequestHeaders)
+	}
+
+	shadowEvent, ok := harness.adapter.shadowEvent()
+	if !ok {
+		t.Fatalf("expected shadow event to be recorded")
+	}
+
+	if shadowEvent.ShadowRequestHeaders[testAuthorization] != testBasicShadow {
+		t.Fatalf("expected path rule shadow request headers on shadow event, got %#v", shadowEvent.ShadowRequestHeaders)
+	}
+}
+
 func TestHandlePreparesReverseProxyHeaders(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{ShadowSamplePercent: 0}, nil)
 
@@ -657,6 +703,7 @@ type runtimeTestAdapter struct {
 	primaryResponse protocol.Response
 	shadowResponse  protocol.Response
 	primaryEvents   []protocol.Event
+	shadowEvents    []protocol.Event
 	shadowSends     int
 }
 
@@ -696,6 +743,7 @@ func (a *runtimeTestAdapter) recordEvent(target protocol.Target, event protocol.
 	}
 
 	if target == protocol.TargetShadow {
+		a.shadowEvents = append(a.shadowEvents, cloneProtocolEvent(event))
 		a.shadowSends++
 	}
 }
@@ -709,6 +757,17 @@ func (a *runtimeTestAdapter) primaryEvent() (protocol.Event, bool) {
 	}
 
 	return cloneProtocolEvent(a.primaryEvents[len(a.primaryEvents)-1]), true
+}
+
+func (a *runtimeTestAdapter) shadowEvent() (protocol.Event, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(a.shadowEvents) == 0 {
+		return protocol.Event{}, false
+	}
+
+	return cloneProtocolEvent(a.shadowEvents[len(a.shadowEvents)-1]), true
 }
 
 func (a *runtimeTestAdapter) shadowSendCount() int {
@@ -759,6 +818,8 @@ func cloneProtocolEvent(event protocol.Event) protocol.Event {
 	event.Header = event.Header.Clone()
 	event.Body = append([]byte(nil), event.Body...)
 	event.Payload = append([]byte(nil), event.Payload...)
+	event.PrimaryRequestHeaders = cloneStringMap(event.PrimaryRequestHeaders)
+	event.ShadowRequestHeaders = cloneStringMap(event.ShadowRequestHeaders)
 
 	return event
 }
