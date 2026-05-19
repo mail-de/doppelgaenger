@@ -148,6 +148,8 @@ forward_response_headers:
   - "Auth-Wait"
   - "Auth-Protocol"
   - "X-Nauthilus-Session"
+  - "Location"
+  - "Set-Cookie"
 
 # compare_headers: list of headers compared between primary and shadow.
 # Applies to: All protocols (if applicable).

@@ -351,7 +351,14 @@ func newHTTPClient(upstreamTLS *tls.Config, cfg HTTPClientConfig) *http.Client {
 		roundTripper = requireHTTP2Transport{next: transport}
 	}
 
-	return &http.Client{Transport: roundTripper}
+	return &http.Client{
+		Transport:     roundTripper,
+		CheckRedirect: preserveBackendRedirect,
+	}
+}
+
+func preserveBackendRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func normalizeHTTPClientConfig(cfg HTTPClientConfig) HTTPClientConfig {

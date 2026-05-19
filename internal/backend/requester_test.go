@@ -108,6 +108,57 @@ func TestRequesterPreservesInboundHost(t *testing.T) {
 	}
 }
 
+func TestRequesterReturnsRedirectWithoutFollowing(t *testing.T) {
+	const (
+		redirectStartPath  = "/oidc/authorize"
+		redirectTargetPath = "/oidc/authorize/de"
+	)
+
+	var redirected bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case redirectStartPath:
+			http.Redirect(w, r, redirectTargetPath, http.StatusFound)
+		case redirectTargetPath:
+			redirected = true
+
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+
+	requester := NewRequester(BackendPrimary, []*url.URL{base}, nil, nil, 0, HTTPClientConfig{}, nil)
+	result := requester.Do(Request{
+		Kind:   BackendPrimary,
+		Method: http.MethodGet,
+		Path:   redirectStartPath,
+	})
+
+	if result.Err != nil {
+		t.Fatalf("expected redirect response to succeed, got error: %v", result.Err)
+	}
+
+	if result.Status != http.StatusFound {
+		t.Fatalf("expected status 302, got %d", result.Status)
+	}
+
+	if got := result.Header.Get("Location"); got != redirectTargetPath {
+		t.Fatalf("expected Location %s, got %q", redirectTargetPath, got)
+	}
+
+	if redirected {
+		t.Fatalf("expected requester not to follow upstream redirect")
+	}
+}
+
 func TestHTTPClientProtocolModes(t *testing.T) {
 	tests := []struct {
 		name     string

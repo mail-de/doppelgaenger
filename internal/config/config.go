@@ -374,6 +374,8 @@ func setHeaderDefaults(v *viper.Viper) {
 		"Auth-Wait",
 		"Auth-Protocol",
 		headerNauthilusSession,
+		"Location",
+		"Set-Cookie",
 	})
 	v.SetDefault("compare_headers", []string{
 		headerAuthStatus,

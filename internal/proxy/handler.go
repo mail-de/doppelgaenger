@@ -37,6 +37,8 @@ const (
 	shadowSkipReasonRateLimited = "rate_limited"
 	compareSkipReasonNoShadow   = "no_shadow"
 	headerNauthilusSession      = "X-Nauthilus-Session"
+	headerLocation              = "Location"
+	headerSetCookie             = "Set-Cookie"
 )
 
 // Handler handles incoming proxy requests.
@@ -540,12 +542,21 @@ func (h *Handler) failPrimaryRequest(
 
 func (h *Handler) writePrimaryResponse(c *gin.Context, corrID string, primaryRes protocol.Response) {
 	headers.WriteSelected(c.Writer, primaryRes.Header, h.cfg.ForwardResponseHeaders)
+	writeRedirectResponseHeaders(c.Writer, primaryRes)
 	c.Writer.Header().Set("X-Request-ID", corrID)
 	c.Status(primaryRes.Status)
 
 	if len(primaryRes.Body) > 0 {
 		_, _ = c.Writer.Write(primaryRes.Body)
 	}
+}
+
+func writeRedirectResponseHeaders(w http.ResponseWriter, response protocol.Response) {
+	if response.Status < http.StatusMultipleChoices || response.Status > http.StatusPermanentRedirect {
+		return
+	}
+
+	headers.WriteSelected(w, response.Header, []string{headerLocation, headerSetCookie})
 }
 
 func (h *Handler) startShadow(requestCtx context.Context, event protocol.Event, payload httpLogPayload, shadowStartedLabel *string) {

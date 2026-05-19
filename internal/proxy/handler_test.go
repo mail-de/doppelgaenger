@@ -60,6 +60,53 @@ func TestEnsureRequestIDGenerates(t *testing.T) {
 	}
 }
 
+func TestWritePrimaryResponsePreservesRedirectHeaders(t *testing.T) {
+	const (
+		redirectLocation = "/oidc/authorize/de"
+		redirectCookie   = "nauthilus=abc; Path=/; HttpOnly"
+	)
+
+	gin.SetMode(gin.TestMode)
+
+	handler := &Handler{
+		cfg: config.Config{ForwardResponseHeaders: []string{testAuthStatus}},
+	}
+	response := protocol.Response{
+		Status: http.StatusFound,
+		Header: http.Header{
+			testAuthStatus: []string{testHeaderOK},
+			"Location":     []string{redirectLocation},
+			"Set-Cookie":   []string{redirectCookie},
+			"X-Skip":       []string{"skip"},
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	handler.writePrimaryResponse(c, "request-id", response)
+
+	if got := c.Writer.Status(); got != http.StatusFound {
+		t.Fatalf("expected status 302, got %d", got)
+	}
+
+	if got := rec.Header().Get("Location"); got != redirectLocation {
+		t.Fatalf("expected Location %s, got %q", redirectLocation, got)
+	}
+
+	if got := rec.Header().Values("Set-Cookie"); len(got) != 1 || got[0] != redirectCookie {
+		t.Fatalf("expected Set-Cookie to be preserved, got %#v", got)
+	}
+
+	if got := rec.Header().Get(testAuthStatus); got != testHeaderOK {
+		t.Fatalf("expected %s %q, got %q", testAuthStatus, testHeaderOK, got)
+	}
+
+	if got := rec.Header().Get("X-Skip"); got != "" {
+		t.Fatalf("expected X-Skip not to be forwarded, got %q", got)
+	}
+}
+
 func TestShouldShadowNoRulesPreservesSamplingAndForceHeader(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
