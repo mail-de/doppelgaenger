@@ -56,7 +56,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `upstream_http_max_idle_conns_per_host`: Max idle keep-alive connections per upstream host.
 - `upstream_http_max_conns_per_host`: Max total upstream connections per host (`0` means unlimited).
 - `upstream_http_protocol`: Upstream protocol mode (`auto`, `http1`, or `http2`). `auto` negotiates HTTP/2 when the upstream offers it; `http1` disables HTTP/2; `http2` rejects an HTTP/1.1 fallback.
-- `forward_response_headers`: Headers passed from the primary backend to the client. Redirect `Location` and `Set-Cookie` are preserved for 3xx responses so browser-facing OIDC flows are not consumed by the proxy.
+- `forward_response_headers`: Headers passed from the primary backend to the client. Keep protocol-visible headers such as `Content-Type`, cache controls, `WWW-Authenticate`, `Location`, and `Set-Cookie` for browser and OIDC clients. Redirect `Location` and `Set-Cookie` are preserved for 3xx responses so browser-facing OIDC flows are not consumed by the proxy.
 - `compare_mode`: Selection of the comparison engine (`nginx`, `header`, `json`, `html`).
 - `compare_json_strict`: Enables strict mode for JSON comparison.
 - `compare_html_threshold`: Similarity threshold for HTML comparison.
@@ -134,6 +134,11 @@ forward_response_headers:
   - "X-Nauthilus-Session"
   - "Location"
   - "Set-Cookie"
+  - "Content-Type"
+  - "Cache-Control"
+  - "Pragma"
+  - "Expires"
+  - "WWW-Authenticate"
 
 # Comparison settings
 compare_mode: nginx # nginx, header, json, html

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -139,6 +140,20 @@ func assertHTTPDefaults(t *testing.T, loaded Config) {
 
 	if loaded.UpstreamHTTPProtocol != upstreamHTTPProtocolAuto {
 		t.Fatalf("expected upstream_http_protocol default auto, got %q", loaded.UpstreamHTTPProtocol)
+	}
+
+	for _, header := range []string{
+		headerLocation,
+		headerSetCookie,
+		headerContentType,
+		headerCacheControl,
+		headerPragma,
+		headerExpires,
+		headerWWWAuthenticate,
+	} {
+		if !slices.Contains(loaded.ForwardResponseHeaders, header) {
+			t.Fatalf("expected default forward_response_headers to include %s, got %#v", header, loaded.ForwardResponseHeaders)
+		}
 	}
 }
 

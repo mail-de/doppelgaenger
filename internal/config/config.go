@@ -52,6 +52,13 @@ const (
 	headerAuthUser         = "Auth-User"
 	headerAuthError        = "Auth-Error"
 	headerNauthilusSession = "X-Nauthilus-Session"
+	headerLocation         = "Location"
+	headerSetCookie        = "Set-Cookie"
+	headerContentType      = "Content-Type"
+	headerCacheControl     = "Cache-Control"
+	headerPragma           = "Pragma"
+	headerExpires          = "Expires"
+	headerWWWAuthenticate  = "WWW-Authenticate"
 )
 
 // Config holds all configuration settings for the proxy.
@@ -374,8 +381,13 @@ func setHeaderDefaults(v *viper.Viper) {
 		"Auth-Wait",
 		"Auth-Protocol",
 		headerNauthilusSession,
-		"Location",
-		"Set-Cookie",
+		headerLocation,
+		headerSetCookie,
+		headerContentType,
+		headerCacheControl,
+		headerPragma,
+		headerExpires,
+		headerWWWAuthenticate,
 	})
 	v.SetDefault("compare_headers", []string{
 		headerAuthStatus,

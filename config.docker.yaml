@@ -93,6 +93,11 @@ forward_response_headers:
   - "X-Nauthilus-Session"
   - "Location"
   - "Set-Cookie"
+  - "Content-Type"
+  - "Cache-Control"
+  - "Pragma"
+  - "Expires"
+  - "WWW-Authenticate"
 
 # compare_headers: list of headers compared between primary and shadow.
 compare_headers:
