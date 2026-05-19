@@ -91,6 +91,26 @@ const (
 	StatusNone = "none"
 )
 
+var durationHistogramBucketsSeconds = []float64{
+	0.0005,
+	0.001,
+	0.002,
+	0.003,
+	0.004,
+	0.005,
+	0.0075,
+	0.01,
+	0.025,
+	0.05,
+	0.1,
+	0.25,
+	0.5,
+	1,
+	2.5,
+	5,
+	10,
+}
+
 // Observability owns Prometheus/OpenMetrics collectors and OpenTelemetry providers.
 type Observability struct {
 	config config.ObservabilityConfig
@@ -346,7 +366,7 @@ func (o *Observability) initializeOpenTelemetryInstruments() error {
 		return err
 	}
 
-	if instruments.ingressDuration, err = o.meter.Float64Histogram("doppelgaenger_ingress_request_duration", metric.WithUnit("s")); err != nil {
+	if instruments.ingressDuration, err = o.meter.Float64Histogram("doppelgaenger_ingress_request_duration", durationHistogramOptions()...); err != nil {
 		return err
 	}
 
@@ -354,7 +374,7 @@ func (o *Observability) initializeOpenTelemetryInstruments() error {
 		return err
 	}
 
-	if instruments.backendDuration, err = o.meter.Float64Histogram("doppelgaenger_backend_request_duration", metric.WithUnit("s")); err != nil {
+	if instruments.backendDuration, err = o.meter.Float64Histogram("doppelgaenger_backend_request_duration", durationHistogramOptions()...); err != nil {
 		return err
 	}
 
@@ -365,6 +385,15 @@ func (o *Observability) initializeOpenTelemetryInstruments() error {
 	o.otelMetrics = instruments
 
 	return nil
+}
+
+func durationHistogramOptions() []metric.Float64HistogramOption {
+	buckets := append([]float64(nil), durationHistogramBucketsSeconds...)
+
+	return []metric.Float64HistogramOption{
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(buckets...),
+	}
 }
 
 func newPrometheusMetrics(registry *prometheus.Registry, runtimeMetrics bool) *prometheusMetrics {
@@ -435,7 +464,7 @@ func newDurationVec(name, help string, labels ...string) *prometheus.HistogramVe
 	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    name,
 		Help:    help,
-		Buckets: prometheus.DefBuckets,
+		Buckets: durationHistogramBucketsSeconds,
 	}, labels)
 }
 

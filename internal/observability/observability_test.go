@@ -6,9 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"doppelgaenger/internal/config"
 )
@@ -51,6 +55,71 @@ func TestPrometheusHandlerRequiresBasicAuthAndServesOpenMetrics(t *testing.T) {
 	if body := w.Body.String(); !strings.Contains(body, "doppelgaenger_ingress_requests_total") {
 		t.Fatalf("expected ingress metric in response, got %q", body)
 	}
+
+	if body := w.Body.String(); !strings.Contains(body, `le="0.001"`) || !strings.Contains(body, `le="0.003"`) {
+		t.Fatalf("expected millisecond-scale duration buckets in response, got %q", body)
+	}
+}
+
+func TestOpenTelemetryDurationHistogramsUseMillisecondScaleBuckets(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+
+	defer func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown meter provider: %v", err)
+		}
+	}()
+
+	obs := &Observability{meter: provider.Meter(instrumentationName)}
+	if err := obs.initializeOpenTelemetryInstruments(); err != nil {
+		t.Fatalf("initialize OpenTelemetry instruments: %v", err)
+	}
+
+	ctx := context.Background()
+	obs.otelMetrics.ingressDuration.Record(ctx, 0.002)
+	obs.otelMetrics.backendDuration.Record(ctx, 0.003)
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &rm); err != nil {
+		t.Fatalf("collect metrics: %v", err)
+	}
+
+	for _, name := range []string{
+		"doppelgaenger_ingress_request_duration",
+		"doppelgaenger_backend_request_duration",
+	} {
+		if got := histogramBounds(t, rm, name); !reflect.DeepEqual(got, durationHistogramBucketsSeconds) {
+			t.Fatalf("expected %s buckets %v, got %v", name, durationHistogramBucketsSeconds, got)
+		}
+	}
+}
+
+func histogramBounds(t *testing.T, rm metricdata.ResourceMetrics, name string) []float64 {
+	t.Helper()
+
+	for _, scopeMetrics := range rm.ScopeMetrics {
+		for _, m := range scopeMetrics.Metrics {
+			if m.Name != name {
+				continue
+			}
+
+			data, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok {
+				t.Fatalf("expected %s to be a float64 histogram, got %T", name, m.Data)
+			}
+
+			if len(data.DataPoints) == 0 {
+				t.Fatalf("expected %s to have histogram data points", name)
+			}
+
+			return data.DataPoints[0].Bounds
+		}
+	}
+
+	t.Fatalf("metric %s not found", name)
+
+	return nil
 }
 
 func TestTraceIDHeaderUsesExtractedTraceContext(t *testing.T) {
