@@ -12,9 +12,9 @@ import (
 
 const compareHeaderXTest = "X-Test"
 
-func TestNginxComparatorDetectsHeaderDiff(t *testing.T) {
+func TestHeaderComparatorDetectsHeaderDiff(t *testing.T) {
 	comparator := newComparatorForTest(t, config.Config{
-		CompareMode:    ModeNginx,
+		CompareMode:    ModeHeader,
 		CompareHeaders: []string{compareHeaderXTest},
 	})
 
@@ -28,6 +28,29 @@ func TestNginxComparatorDetectsHeaderDiff(t *testing.T) {
 
 	if !result.Diff || !result.HeaderDiff {
 		t.Fatalf("expected header diff to be detected")
+	}
+
+	if result.Mode != ModeHeader {
+		t.Fatalf("expected visible compare mode %q, got %q", ModeHeader, result.Mode)
+	}
+}
+
+func TestNginxAliasReportsHeaderMode(t *testing.T) {
+	comparator := newComparatorForTest(t, config.Config{
+		CompareMode:    ModeNginx,
+		CompareHeaders: []string{compareHeaderXTest},
+	})
+
+	primary := backend.Result{Header: http.Header{compareHeaderXTest: []string{"a"}}}
+	shadow := backend.Result{Header: http.Header{compareHeaderXTest: []string{"a"}}}
+
+	result, err := comparator.Compare(primary, shadow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Mode != ModeHeader {
+		t.Fatalf("expected legacy nginx alias to report %q, got %q", ModeHeader, result.Mode)
 	}
 }
 

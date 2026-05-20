@@ -155,8 +155,9 @@ compare_headers:
   - "Auth-Error"
   - "X-Nauthilus-Session"
 
-# compare_mode: selects the comparison mode (nginx, header, json, html).
-compare_mode: "nginx"
+# compare_mode: selects the comparison mode (header, json, html).
+# The legacy value nginx is accepted as an alias for header.
+compare_mode: "header"
 
 # grpc_compare_mode: status, status_metadata, message_count, or message_hash.
 grpc_compare_mode: "status"

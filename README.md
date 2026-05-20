@@ -57,7 +57,7 @@ These settings apply across protocols unless a protocol-specific section says ot
 - `upstream_http_max_conns_per_host`: Max total upstream connections per host (`0` means unlimited).
 - `upstream_http_protocol`: Upstream protocol mode (`auto`, `http1`, or `http2`). `auto` negotiates HTTP/2 when the upstream offers it; `http1` disables HTTP/2; `http2` rejects an HTTP/1.1 fallback.
 - `forward_response_headers`: Headers passed from the primary backend to the client. Keep protocol-visible headers such as `Content-Type`, `Content-Encoding`, `Vary`, cache controls, `WWW-Authenticate`, `Location`, and `Set-Cookie` for browser and OIDC clients. Redirect `Location` and `Set-Cookie` are preserved for 3xx responses so browser-facing OIDC flows are not consumed by the proxy.
-- `compare_mode`: Selection of the comparison engine (`nginx`, `header`, `json`, `html`).
+- `compare_mode`: Selection of the comparison engine (`header`, `json`, `html`; legacy `nginx` is accepted as an alias for `header`).
 - `compare_json_strict`: Enables strict mode for JSON comparison.
 - `compare_html_threshold`: Similarity threshold for HTML comparison.
 - `path_rules`: Ordered HTTP path policy for per-route shadowing and comparison.
@@ -156,7 +156,7 @@ forward_response_headers:
   - "Vary"
 
 # Comparison settings
-compare_mode: nginx # nginx, header, json, html
+compare_mode: header # header, json, html; nginx is accepted as a legacy alias
 compare_headers:
   - "Auth-Status"
   - "Auth-Server"
@@ -331,8 +331,9 @@ Rule fields:
   only. Query strings are not part of matching.
 - `shadow`: Optional shadow policy. Defaults to `inherit`.
 - `compare`: Optional comparison policy. Defaults to `inherit`.
-- `compare_mode`: Optional per-rule comparison engine (`nginx`, `header`,
-  `json`, or `html`). If omitted, the global `compare_mode` is used.
+- `compare_mode`: Optional per-rule comparison engine (`header`, `json`, or
+  `html`; legacy `nginx` is accepted as an alias for `header`). If omitted, the
+  global `compare_mode` is used.
 - `compare_headers`: Optional per-rule response header list. If omitted, the
   global `compare_headers` list is used. If explicitly set to `[]`, no headers
   are compared for that rule.

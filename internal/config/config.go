@@ -495,7 +495,7 @@ func setGRPCDefaults(v *viper.Viper) {
 }
 
 func setCompareDefaults(v *viper.Viper) {
-	v.SetDefault("compare_mode", compareModeNginx)
+	v.SetDefault("compare_mode", compareModeHeader)
 	v.SetDefault("compare_json_strict", false)
 	v.SetDefault("compare_html_threshold", 0.99)
 	v.SetDefault("log_session_only_on_diff", true)
@@ -1126,14 +1126,17 @@ func grpcShadowTargetsRequired(cfg Config) bool {
 func normalizeCompareConfig(cfg *Config) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))
 	switch mode {
-	case "", compareModeNginx, compareModeHeader, compareModeJSON, compareModeHTML:
+	case "", compareModeNginx, compareModeHeader:
 		if mode == "" {
-			mode = compareModeNginx
+			mode = compareModeHeader
+		} else {
+			mode = compareModeHeader
 		}
+	case compareModeJSON, compareModeHTML:
 	case "nxinx":
-		mode = compareModeNginx
+		mode = compareModeHeader
 	default:
-		mode = compareModeNginx
+		mode = compareModeHeader
 	}
 
 	cfg.CompareMode = mode
@@ -1273,7 +1276,11 @@ func normalizePathRuleCompare(raw string) (string, error) {
 func normalizePathRuleCompareMode(raw string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	switch mode {
-	case "", compareModeNginx, compareModeHeader, compareModeJSON, compareModeHTML:
+	case "":
+		return mode, nil
+	case compareModeNginx, compareModeHeader:
+		return compareModeHeader, nil
+	case compareModeJSON, compareModeHTML:
 		return mode, nil
 	default:
 		return "", fmt.Errorf("unsupported value %q (allowed: nginx, header, json, html)", raw)

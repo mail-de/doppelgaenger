@@ -205,7 +205,7 @@ func TestHandlePathRuleShadowNeverBlocksForceHeader(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowForceHeader:   testShadowForceHeader,
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		PathRules: []config.PathRule{
 			{Name: "blocked", Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeNever), Compare: string(pathrules.CompareDecisionOff)},
 		},
@@ -236,7 +236,7 @@ func TestHandlePathRuleShadowNeverBlocksForceHeader(t *testing.T) {
 func TestHandleUnmatchedPathIsPrimaryOnlyWhenRulesConfigured(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		PathRules: []config.PathRule{
 			{Name: "matched", Match: "^/matched$", Shadow: string(pathrules.ShadowModeAuto), Compare: string(pathrules.CompareDecisionOn)},
 		},
@@ -314,7 +314,7 @@ func TestShouldShadowAlwaysBypassesSamplingButRespectsLimiter(t *testing.T) {
 func TestHandleCompareOffRunsShadowAndSkipsComparison(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		PathRules: []config.PathRule{
 			{Name: "no-compare", Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOff)},
 		},
@@ -342,7 +342,7 @@ func TestHandleCompareOffRunsShadowAndSkipsComparison(t *testing.T) {
 func TestHandlePathRuleCompareModeJSON(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		CompareHeaders:      []string{},
 		PathRules: []config.PathRule{
 			{Name: "json", Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOn), CompareMode: compare.ModeJSON},
@@ -364,7 +364,7 @@ func TestHandlePathRuleCompareModeJSON(t *testing.T) {
 func TestHandlePathRuleCompareHeadersOverride(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		CompareHeaders:      []string{testGlobalHeader},
 		PathRules: []config.PathRule{
 			{Name: testHeadersRuleName, Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOn), CompareHeaders: []string{testRuleHeader}},
@@ -397,7 +397,7 @@ func TestHandlePathRuleCompareHeadersOverride(t *testing.T) {
 func TestHandlePathRuleCompareHeadersExplicitEmpty(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		CompareHeaders:      []string{testGlobalHeader},
 		PathRules: []config.PathRule{
 			{Name: testHeadersRuleName, Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOn), CompareHeaders: []string{}},
@@ -424,7 +424,7 @@ func TestHandlePathRuleCompareHeadersExplicitEmpty(t *testing.T) {
 func TestHandleAddsPathRuleRequestHeadersToBackendEvents(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
-		CompareMode:         compare.ModeNginx,
+		CompareMode:         compare.ModeHeader,
 		PathRules: []config.PathRule{
 			{
 				Name:                  "metrics",
@@ -528,7 +528,7 @@ func newRuntimeHarness(t *testing.T, cfg config.Config, limiter ratelimit.Limite
 	t.Helper()
 
 	if cfg.CompareMode == "" {
-		cfg.CompareMode = compare.ModeNginx
+		cfg.CompareMode = compare.ModeHeader
 	}
 
 	if cfg.ForwardResponseHeaders == nil {

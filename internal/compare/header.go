@@ -6,20 +6,20 @@ import (
 	"doppelgaenger/internal/backend"
 )
 
-type nginxComparator struct {
+type headerComparator struct {
 	baseComparator
 	logger *slog.Logger
 }
 
-func (c *nginxComparator) Compare(primary, shadow backend.Result) (Result, error) {
+func (c *headerComparator) Compare(primary, shadow backend.Result) (Result, error) {
 	return c.CompareWithHeaders(primary, shadow, nil)
 }
 
-func (c *nginxComparator) CompareWithHeaders(primary, shadow backend.Result, compareHeaders []string) (Result, error) {
+func (c *headerComparator) CompareWithHeaders(primary, shadow backend.Result, compareHeaders []string) (Result, error) {
 	pKV, sKV, diffs, hasDiff := c.compareHeaders(primary.Header, shadow.Header, compareHeaders)
 
 	return Result{
-		Mode:          ModeNginx,
+		Mode:          ModeHeader,
 		Diff:          hasDiff,
 		HeaderDiff:    hasDiff,
 		HeaderPrimary: pKV,

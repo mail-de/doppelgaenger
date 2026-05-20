@@ -524,10 +524,29 @@ path_rules: []
 				t.Fatalf("expected no path rules, got %#v", loaded.PathRules)
 			}
 
-			if loaded.CompareMode != compareModeNginx {
+			if loaded.CompareMode != compareModeHeader {
 				t.Fatalf("expected existing compare_mode default, got %q", loaded.CompareMode)
 			}
 		})
+	}
+}
+
+func TestLoadCompareModeNginxCanonicalizesToHeader(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+compare_mode: nginx
+path_rules:
+  - name: auth
+    match: "^/auth$"
+    compare_mode: nginx
+`))
+
+	if loaded.CompareMode != compareModeHeader {
+		t.Fatalf("expected global compare_mode to canonicalize to header, got %q", loaded.CompareMode)
+	}
+
+	if got := loaded.PathRules[0].CompareMode; got != compareModeHeader {
+		t.Fatalf("expected path rule compare_mode to canonicalize to header, got %q", got)
 	}
 }
 

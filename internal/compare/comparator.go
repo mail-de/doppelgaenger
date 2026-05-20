@@ -13,7 +13,9 @@ import (
 )
 
 const (
-	// ModeNginx compares response headers in the nginx auth-request style.
+	// ModeHeader compares configured response headers.
+	ModeHeader = "header"
+	// ModeNginx is a legacy alias for ModeHeader.
 	ModeNginx = "nginx"
 	// ModeJSON compares response bodies as JSON.
 	ModeJSON = "json"
@@ -61,8 +63,8 @@ type JSONPathDiff struct {
 func NewComparator(cfg config.Config, logger *slog.Logger) (Comparator, error) {
 	mode := normalizeCompareMode(cfg.CompareMode)
 	switch mode {
-	case ModeNginx:
-		return &nginxComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger}, nil
+	case ModeHeader:
+		return &headerComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger}, nil
 	case ModeJSON:
 		return newJSONComparator(cfg, logger), nil
 	case ModeHTML:
@@ -75,9 +77,9 @@ func NewComparator(cfg config.Config, logger *slog.Logger) (Comparator, error) {
 // NewRegistry builds all HTTP comparators once so requests can select the mode dynamically.
 func NewRegistry(cfg config.Config, logger *slog.Logger) (*Registry, error) {
 	comparators := map[string]headerAwareComparator{
-		ModeNginx: &nginxComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger},
-		ModeJSON:  newJSONComparator(cfg, logger),
-		ModeHTML:  &htmlComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger},
+		ModeHeader: &headerComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger},
+		ModeJSON:   newJSONComparator(cfg, logger),
+		ModeHTML:   &htmlComparator{baseComparator: baseComparator{cfg: cfg}, logger: logger},
 	}
 
 	defaultMode := normalizeCompareMode(cfg.CompareMode)
@@ -110,8 +112,8 @@ func (r *Registry) Compare(mode string, compareHeaders []string, primary, shadow
 func normalizeCompareMode(raw string) string {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	switch mode {
-	case "", "nxinx", "header":
-		return ModeNginx
+	case "", "nxinx", ModeNginx, ModeHeader:
+		return ModeHeader
 	default:
 		return mode
 	}
