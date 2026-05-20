@@ -1,18 +1,18 @@
 # Global Settings
 # ------------------------------------------------------------------------------
-# protocol: selects the proxy protocol. Supported values: "http" or "milter".
+# protocol: selects the proxy protocol. Supported values: "http", "grpc", or "milter".
 protocol: http
 
 # listen_addr: the address the HTTP proxy listens on (e.g., ":8080").
 # Applies to: HTTP protocol.
 listen_addr: ":8080"
 
-# tls_cert_file: path to the TLS certificate file for the proxy server.
-# Applies to: All protocols (if applicable).
+# tls_cert_file: path to the TLS certificate file for the HTTP proxy listener.
+# Applies to: HTTP protocol.
 tls_cert_file: ""
 
-# tls_key_file: path to the TLS key file for the proxy server.
-# Applies to: All protocols (if applicable).
+# tls_key_file: path to the TLS key file for the HTTP proxy listener.
+# Applies to: HTTP protocol.
 tls_key_file: ""
 
 # Milter Adapter Settings
@@ -32,6 +32,66 @@ shadow_milter_addr: "127.0.0.1:9998"
 # milter_timeout: the timeout for Milter upstream operations.
 # Applies to: Milter protocol.
 milter_timeout: "2s"
+
+# gRPC Adapter Settings
+# ------------------------------------------------------------------------------
+# grpc_listen_addr: the TCP address for the gRPC proxy listener.
+# Applies to: gRPC protocol.
+grpc_listen_addr: ":9444"
+
+# grpc_tls: optional inbound gRPC TLS and mTLS.
+# client_ca plus require_client_cert enables client certificate verification.
+# Applies to: gRPC protocol.
+grpc_tls:
+  enabled: false
+  # cert: "/etc/doppelgaenger/grpc.crt"
+  # key: "/etc/doppelgaenger/grpc.key"
+  # client_ca: "/etc/doppelgaenger/clients-ca.pem"
+  require_client_cert: false
+  min_tls_version: "1.2"
+
+# primary_grpc_targets: list of primary gRPC backends.
+# Target address is host:port or an explicit gRPC resolver URI, not an HTTP URL.
+# Applies to: gRPC protocol.
+primary_grpc_targets: []
+# Example:
+# primary_grpc_targets:
+#   - name: primary
+#     address: "primary.example.net:9443"
+#     authority: "primary.example.net"
+#     tls:
+#       enabled: true
+#       root_ca: "/etc/doppelgaenger/primary-ca.pem"
+#       server_name: "primary.example.net"
+#       client_cert: "/etc/doppelgaenger/primary-client.crt"
+#       client_key: "/etc/doppelgaenger/primary-client.key"
+#       insecure_skip_verify: false
+
+# primary_grpc_selection_mode: strategy for selecting one primary gRPC target.
+# Supported values: "round_robin", "source_ip_hash".
+# Applies to: gRPC protocol.
+primary_grpc_selection_mode: "round_robin"
+
+# shadow_grpc_targets: list of shadow gRPC backends.
+# Applies to: gRPC protocol.
+shadow_grpc_targets: []
+# Example:
+# shadow_grpc_targets:
+#   - name: shadow
+#     address: "shadow.example.net:9443"
+#     authority: "shadow.example.net"
+#     tls:
+#       enabled: true
+#       root_ca: "/etc/doppelgaenger/shadow-ca.pem"
+#       server_name: "shadow.example.net"
+#       client_cert: "/etc/doppelgaenger/shadow-client.crt"
+#       client_key: "/etc/doppelgaenger/shadow-client.key"
+#       insecure_skip_verify: false
+
+# shadow_grpc_selection_mode: strategy for selecting one shadow gRPC target.
+# Supported values: "round_robin", "source_ip_hash".
+# Applies to: gRPC protocol.
+shadow_grpc_selection_mode: "round_robin"
 
 # HTTP Adapter Settings
 # ------------------------------------------------------------------------------
@@ -55,20 +115,20 @@ shadow_base_urls:
 # Applies to: HTTP protocol.
 shadow_selection_mode: "round_robin"
 
-# root_ca: path to a common CA certificate for all upstream backends.
-# Applies to: All protocols (HTTP upstreams or Milter if TLS is used).
+# root_ca: path to a common CA certificate for HTTP upstream backends.
+# Applies to: HTTP protocol.
 root_ca: ""
 
-# primary_root_ca: path to the CA certificate specifically for the primary backend.
-# Applies to: All protocols.
+# primary_root_ca: path to the CA certificate specifically for the primary HTTP backend.
+# Applies to: HTTP protocol.
 primary_root_ca: ""
 
-# shadow_root_ca: path to the CA certificate specifically for the shadow backend.
-# Applies to: All protocols.
+# shadow_root_ca: path to the CA certificate specifically for the shadow HTTP backend.
+# Applies to: HTTP protocol.
 shadow_root_ca: ""
 
-# insecure_upstream: allows insecure TLS connections (no verification) to backends.
-# Applies to: All protocols.
+# insecure_upstream: allows insecure TLS connections to HTTP backends.
+# Applies to: HTTP protocol.
 insecure_upstream: false
 
 # Shadow & Rate Limiting Settings
@@ -80,6 +140,11 @@ shadow_sample_percent: 5
 # shadow_force_header: header name that (if present) forces shadowing.
 # Applies to: HTTP protocol.
 shadow_force_header: "X-Shadow"
+
+# grpc_shadow_force_metadata: metadata key that forces gRPC shadowing when
+# present and non-empty, unless a matched grpc_rules entry uses shadow: never.
+# Applies to: gRPC protocol.
+grpc_shadow_force_metadata: "x-shadow"
 
 # primary_request_headers: optional static headers added to requests sent to primary.
 # path_rules[].primary_request_headers can override these values per matched path.
@@ -102,6 +167,22 @@ shadow_burst: 400
 # shadow_timeout: time limit for requests to the shadow backend.
 # Applies to: HTTP protocol (for Milter, milter_timeout is used).
 shadow_timeout: "150ms"
+
+# grpc_shadow_timeout: best-effort time limit for shadow gRPC streams.
+# The primary stream is not constrained by this timeout.
+# Applies to: gRPC protocol.
+grpc_shadow_timeout: "500ms"
+
+# grpc_shadow_queue_size: bounded request-message queue for shadow forwarding.
+# Queue-full stops shadowing for that RPC while primary continues.
+# Applies to: gRPC protocol.
+grpc_shadow_queue_size: 128
+
+# grpc_max_receive_message_bytes / grpc_max_send_message_bytes: gRPC message
+# size limits for inbound and outbound calls.
+# Applies to: gRPC protocol.
+grpc_max_receive_message_bytes: 4194304
+grpc_max_send_message_bytes: 4194304
 
 # max_backend_body_bytes: limits the size of the request body sent to backends.
 # Applies to: HTTP protocol.
@@ -174,6 +255,18 @@ compare_headers:
 # Applies to: HTTP protocol.
 compare_mode: "nginx"
 
+# grpc_compare_mode: selects the default gRPC comparison mode.
+# Supported values: status, status_metadata, message_count, message_hash.
+# Applies to: gRPC protocol.
+grpc_compare_mode: "status"
+
+# grpc_compare_metadata: metadata/trailer keys compared by status_metadata.
+# Keep this as an explicit allowlist; arbitrary request metadata is not logged.
+# Applies to: gRPC protocol.
+grpc_compare_metadata:
+  - "grpc-status"
+  - "grpc-message"
+
 # compare_json_strict: controls strict JSON comparison behavior.
 # Applies to: HTTP protocol.
 compare_json_strict: false
@@ -216,6 +309,36 @@ path_rules: []
 #     shadow: never
 #     compare: off
 
+# gRPC Rule Settings
+# ------------------------------------------------------------------------------
+# grpc_rules: optional ordered gRPC service/method policy. Empty preserves
+# global gRPC behavior. If this list is non-empty and no rule matches, the RPC
+# is primary-only and comparison is skipped.
+# Applies to: gRPC protocol.
+grpc_rules: []
+
+# Example: shadow selected auth RPCs and keep everything else primary-only.
+# grpc_rules:
+#   - name: auth-shadow
+#     service: "nauthilus.auth.v1.AuthService"
+#     methods: ["Authenticate", "LookupIdentity", "ListAccounts"]
+#     shadow: auto
+#     compare: on
+#     compare_mode: status_metadata
+#     compare_metadata:
+#       - "grpc-status"
+#       - "grpc-message"
+#       - "x-nauthilus-session"
+#     primary_metadata:
+#       authorization: "Basic primary-token"
+#     shadow_metadata:
+#       authorization: "Basic shadow-token"
+#
+#   - name: default-primary-only
+#     service: "*"
+#     shadow: never
+#     compare: off
+
 # Logging Settings
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
@@ -231,6 +354,7 @@ log_json: true
 # observability: optional OpenMetrics and OpenTelemetry exporters.
 # All observability features are opt-in. W3C trace context is propagated when
 # a trace is active; trace_id_header adds the bare trace ID for downstream logs.
+# For gRPC, this is emitted as lowercase metadata (for example x-trace-id).
 observability:
   prometheus_enabled: false
   prometheus_address: "127.0.0.1"

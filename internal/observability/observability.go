@@ -30,6 +30,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/fx"
+	"google.golang.org/grpc/metadata"
 
 	"doppelgaenger/internal/config"
 )
@@ -84,6 +85,10 @@ const (
 	ResultSkipped = "skipped"
 	// ResultStatusCode labels HTTP status-code differences.
 	ResultStatusCode = "status_code"
+	// ResultQueueFull labels backend work that degraded because a bounded queue filled.
+	ResultQueueFull = "queue_full"
+	// ResultTimeout labels backend work that exceeded its timeout.
+	ResultTimeout = "timeout"
 
 	// StatusError labels backend requests that failed before a usable status was available.
 	StatusError = "error"
@@ -665,6 +670,33 @@ func (o *Observability) InjectHTTPTraceContext(ctx context.Context, header http.
 	o.SetTraceIDHeader(ctx, header)
 }
 
+// ExtractGRPCContext extracts an incoming W3C trace context from gRPC metadata.
+func (o *Observability) ExtractGRPCContext(ctx context.Context, md metadata.MD) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if o == nil || md == nil {
+		return ctx
+	}
+
+	return otel.GetTextMapPropagator().Extract(ctx, grpcMetadataCarrier{md: md})
+}
+
+// InjectGRPCTraceContext injects W3C trace context and the configured bare trace-id metadata.
+func (o *Observability) InjectGRPCTraceContext(ctx context.Context, md metadata.MD) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if o == nil || md == nil {
+		return
+	}
+
+	otel.GetTextMapPropagator().Inject(ctx, grpcMetadataCarrier{md: md})
+	o.SetGRPCTraceIDMetadata(ctx, md)
+}
+
 // SetTraceIDHeader writes the configured bare trace-id header when a valid trace is active.
 func (o *Observability) SetTraceIDHeader(ctx context.Context, header http.Header) {
 	if o == nil || header == nil || o.config.TraceIDHeader == "" {
@@ -680,6 +712,22 @@ func (o *Observability) SetTraceIDHeader(ctx context.Context, header http.Header
 	}
 }
 
+// SetGRPCTraceIDMetadata writes the configured bare trace-id metadata when a valid trace is active.
+func (o *Observability) SetGRPCTraceIDMetadata(ctx context.Context, md metadata.MD) {
+	if o == nil || md == nil || o.config.TraceIDHeader == "" {
+		return
+	}
+
+	key := grpcTraceIDMetadataKey(o.config.TraceIDHeader)
+	if key == "" || len(md.Get(key)) > 0 {
+		return
+	}
+
+	if traceID := TraceIDFromContext(ctx); traceID != "" {
+		md.Set(key, traceID)
+	}
+}
+
 // TraceIDFromContext returns the active span trace ID, if one exists.
 func TraceIDFromContext(ctx context.Context) string {
 	if ctx == nil {
@@ -692,6 +740,54 @@ func TraceIDFromContext(ctx context.Context) string {
 	}
 
 	return spanCtx.TraceID().String()
+}
+
+type grpcMetadataCarrier struct {
+	md metadata.MD
+}
+
+func (c grpcMetadataCarrier) Get(key string) string {
+	values := c.md.Get(strings.ToLower(key))
+	if len(values) == 0 {
+		return ""
+	}
+
+	return values[0]
+}
+
+func (c grpcMetadataCarrier) Set(key string, value string) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return
+	}
+
+	c.md.Set(key, value)
+}
+
+func (c grpcMetadataCarrier) Keys() []string {
+	keys := make([]string, 0, len(c.md))
+	for key := range c.md {
+		keys = append(keys, key)
+	}
+
+	return keys
+}
+
+func grpcTraceIDMetadataKey(value string) string {
+	key := strings.ToLower(strings.TrimSpace(value))
+	if key == "" {
+		return ""
+	}
+
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+
+		return ""
+	}
+
+	return key
 }
 
 func (o *Observability) traceSpansEnabled() bool {

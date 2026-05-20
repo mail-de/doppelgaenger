@@ -16,8 +16,10 @@ import (
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/grpcproxy"
 	"doppelgaenger/internal/milterproxy"
 	"doppelgaenger/internal/observability"
+	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/proxy"
 	"doppelgaenger/internal/server"
 )
@@ -57,7 +59,11 @@ func main() {
 		}
 	}
 
-	fx.New(
+	newApp().Run()
+}
+
+func newApp() *fx.App {
+	return fx.New(
 		fx.WithLogger(func() fxevent.Logger {
 			return fxevent.NopLogger
 		}),
@@ -72,8 +78,8 @@ func main() {
 			app.NewShadowLimiter,
 			compare.NewComparator,
 			compare.NewRegistry,
-			app.NewProtocolAdapter,
-			app.NewProtocolComparator,
+			newProtocolAdapter,
+			newProtocolComparator,
 			app.NewProtocolRunner,
 			proxy.NewPathMapper,
 			proxy.NewPathRuleResolver,
@@ -82,13 +88,34 @@ func main() {
 			server.NewServer,
 			milterproxy.NewHandler,
 			milterproxy.NewServer,
+			grpcproxy.NewConfiguredResolver,
+			grpcproxy.NewTargetPools,
+			grpcproxy.NewHandler,
+			grpcproxy.NewServer,
 		),
 		fx.Invoke(server.RegisterHooks),
 		fx.Invoke(milterproxy.RegisterHooks),
+		fx.Invoke(grpcproxy.RegisterHooks),
 		fx.Invoke(observability.RegisterHooks),
 		fx.Invoke(app.RegisterReloadHook),
 		fx.Invoke(app.ApplyRuntimeSecurity),
-	).Run()
+	)
+}
+
+func newProtocolAdapter(deps app.ProtocolAdapterDeps) (protocol.Adapter, error) {
+	if deps.Config.Protocol == grpcproxy.ProtocolName {
+		return grpcproxy.NewInactiveAdapter(), nil
+	}
+
+	return app.NewProtocolAdapter(deps)
+}
+
+func newProtocolComparator(deps app.ProtocolComparatorDeps) (protocol.Comparator, error) {
+	if deps.Config.Protocol == grpcproxy.ProtocolName {
+		return grpcproxy.NewInactiveComparator(), nil
+	}
+
+	return app.NewProtocolComparator(deps)
 }
 
 func parseCLI(args []string, errorOutput io.Writer) (cliOptions, error) {
@@ -117,7 +144,7 @@ func printVersion(w io.Writer, value string) {
 
 func printUsage(w io.Writer, name string) {
 	_, _ = fmt.Fprintf(w, "Usage: %s [--help|-h] [--version] [--config|-c <path>]\n", name)
-	_, _ = fmt.Fprintln(w, "HTTP Shadow Proxy")
+	_, _ = fmt.Fprintln(w, "Doppelgaenger Shadow Proxy")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Command-line options:")
 	_, _ = fmt.Fprintln(w, "  --config, -c <path>  Path to the YAML config file")

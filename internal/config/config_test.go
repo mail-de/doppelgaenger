@@ -531,6 +531,224 @@ path_rules: []
 	}
 }
 
+func TestLoadMinimalGRPCConfig(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - name: " primary "
+    address: " primary.example.com:9443 "
+`))
+
+	if loaded.Protocol != protocolGRPC {
+		t.Fatalf("expected protocol grpc, got %q", loaded.Protocol)
+	}
+
+	if loaded.GRPCListenAddr != ":9444" {
+		t.Fatalf("expected default grpc listen addr, got %q", loaded.GRPCListenAddr)
+	}
+
+	if loaded.PrimaryGRPCSelectionMode != selectionRoundRobin {
+		t.Fatalf("expected default primary gRPC selection round_robin, got %q", loaded.PrimaryGRPCSelectionMode)
+	}
+
+	if len(loaded.PrimaryGRPCTargets) != 1 {
+		t.Fatalf("expected one primary gRPC target, got %#v", loaded.PrimaryGRPCTargets)
+	}
+
+	if loaded.PrimaryGRPCTargets[0].Name != "primary" {
+		t.Fatalf("expected trimmed primary target name, got %q", loaded.PrimaryGRPCTargets[0].Name)
+	}
+
+	if loaded.PrimaryGRPCTargets[0].Address != "primary.example.com:9443" {
+		t.Fatalf("expected trimmed primary target address, got %q", loaded.PrimaryGRPCTargets[0].Address)
+	}
+
+	if loaded.GRPCShadowTimeout != 500*time.Millisecond {
+		t.Fatalf("expected default grpc shadow timeout 500ms, got %s", loaded.GRPCShadowTimeout)
+	}
+
+	if loaded.GRPCShadowQueueSize != 128 {
+		t.Fatalf("expected default grpc shadow queue size 128, got %d", loaded.GRPCShadowQueueSize)
+	}
+
+	if loaded.GRPCCompareMode != grpcCompareModeStatus {
+		t.Fatalf("expected default grpc compare mode status, got %q", loaded.GRPCCompareMode)
+	}
+}
+
+func TestLoadGRPCNormalizesMetadataKeys(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+grpc_shadow_force_metadata: " X-Shadow "
+grpc_compare_metadata:
+  - "Grpc-Status"
+  - "X-Request.ID"
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_rules:
+  - service: "*"
+    shadow: never
+    compare_metadata:
+      - "Grpc-Message"
+      - "X-App"
+    primary_metadata:
+      Authorization: "Basic primary-token"
+    shadow_metadata:
+      X-Shadow-Route: "metrics"
+`))
+
+	if loaded.GRPCShadowForceMetadata != "x-shadow" {
+		t.Fatalf("expected lower-case force metadata key, got %q", loaded.GRPCShadowForceMetadata)
+	}
+
+	expectedCompare := []string{grpcMetadataStatus, "x-request.id"}
+	if len(loaded.GRPCCompareMetadata) != len(expectedCompare) {
+		t.Fatalf("expected compare metadata %#v, got %#v", expectedCompare, loaded.GRPCCompareMetadata)
+	}
+
+	for i, expected := range expectedCompare {
+		if loaded.GRPCCompareMetadata[i] != expected {
+			t.Fatalf("expected compare metadata %d to be %q, got %q", i, expected, loaded.GRPCCompareMetadata[i])
+		}
+	}
+
+	rule := loaded.GRPCRules[0]
+	if rule.CompareMetadata[0] != grpcMetadataMessage || rule.CompareMetadata[1] != "x-app" {
+		t.Fatalf("expected lower-case rule compare metadata, got %#v", rule.CompareMetadata)
+	}
+
+	if rule.PrimaryMetadata["authorization"] != pathRuleTestPrimaryAuth {
+		t.Fatalf("expected lower-case primary metadata overlay, got %#v", rule.PrimaryMetadata)
+	}
+
+	if rule.ShadowMetadata["x-shadow-route"] != pathRuleTestRouteValue {
+		t.Fatalf("expected lower-case shadow metadata overlay, got %#v", rule.ShadowMetadata)
+	}
+}
+
+func TestLoadGRPCRejectsReservedOverlayMetadataKeys(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_rules:
+  - service: "*"
+    primary_metadata:
+      content-type: "application/grpc"
+`), "expected reserved gRPC overlay metadata key to fail config loading")
+}
+
+func TestLoadGRPCRejectsBinaryOverlayMetadataKeys(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_rules:
+  - service: "*"
+    shadow_metadata:
+      custom-bin: "AAAA"
+`), "expected binary gRPC overlay metadata key to fail config loading")
+}
+
+func TestLoadGRPCRejectsEmptyPrimaryTargets(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets: []
+`), "expected empty primary gRPC targets to fail config loading")
+}
+
+func TestLoadGRPCRejectsShadowCapableConfigWithoutShadowTargets(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_rules:
+  - service: "pkg.Service"
+    shadow: always
+`), "expected shadow-capable gRPC config without shadow targets to fail config loading")
+}
+
+func TestLoadGRPCRejectsTLSValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "missing key",
+			yaml: `
+grpc_tls:
+  enabled: true
+  cert: "/tmp/tls.crt"
+`,
+		},
+		{
+			name: "missing client ca",
+			yaml: `
+grpc_tls:
+  enabled: true
+  cert: "/tmp/tls.crt"
+  key: "/tmp/tls.key"
+  require_client_cert: true
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+`+tt.yaml), "expected invalid gRPC TLS config to fail loading")
+		})
+	}
+}
+
+func TestLoadGRPCRejectsTargetTLSValidationErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "target client key missing",
+			yaml: `
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+    tls:
+      enabled: true
+      client_cert: "/tmp/client.crt"
+`,
+		},
+		{
+			name: "target client cert without TLS",
+			yaml: `
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+    tls:
+      enabled: false
+      client_cert: "/tmp/client.crt"
+      client_key: "/tmp/client.key"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+`+tt.yaml), "expected invalid gRPC target TLS config to fail loading")
+		})
+	}
+}
+
 func expectLoadFailure(t *testing.T, configContent []byte, message string) {
 	t.Helper()
 

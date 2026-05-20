@@ -24,11 +24,20 @@ import (
 const (
 	protocolHTTP   = "http"
 	protocolMilter = "milter"
+	protocolGRPC   = "grpc"
 
 	compareModeNginx  = "nginx"
 	compareModeHeader = "header"
 	compareModeJSON   = "json"
 	compareModeHTML   = "html"
+
+	grpcCompareModeStatus         = "status"
+	grpcCompareModeStatusMetadata = "status_metadata"
+	grpcCompareModeMessageCount   = "message_count"
+	grpcCompareModeMessageHash    = "message_hash"
+	grpcMetadataStatus            = "grpc-status"
+	grpcMetadataMessage           = "grpc-message"
+	tlsMinVersionDefault          = "1.2"
 
 	pathRuleShadowInherit = "inherit"
 	pathRuleShadowAuto    = "auto"
@@ -38,6 +47,15 @@ const (
 	pathRuleCompareInherit = "inherit"
 	pathRuleCompareOn      = "on"
 	pathRuleCompareOff     = "off"
+
+	grpcRuleShadowInherit = pathRuleShadowInherit
+	grpcRuleShadowAuto    = pathRuleShadowAuto
+	grpcRuleShadowNever   = pathRuleShadowNever
+	grpcRuleShadowAlways  = pathRuleShadowAlways
+
+	grpcRuleCompareInherit = pathRuleCompareInherit
+	grpcRuleCompareOn      = pathRuleCompareOn
+	grpcRuleCompareOff     = pathRuleCompareOff
 
 	selectionRoundRobin   = "round_robin"
 	selectionSourceIPHash = "source_ip_hash"
@@ -65,7 +83,7 @@ const (
 
 // Config holds all configuration settings for the proxy.
 type Config struct {
-	// Protocol selects the proxy protocol (http or milter).
+	// Protocol selects the proxy protocol (http, grpc, or milter).
 	Protocol string `mapstructure:"protocol"`
 	// PrimaryBaseURLs is the list of primary backends.
 	// Applies to: HTTP protocol.
@@ -138,10 +156,66 @@ type Config struct {
 	// Applies to: Milter protocol.
 	MilterTimeout time.Duration `mapstructure:"milter_timeout"`
 
-	// TLSCertFile path to the TLS certificate file for the proxy server.
+	// GRPCListenAddr is the TCP address for the gRPC proxy listener.
+	// Applies to: gRPC protocol.
+	GRPCListenAddr string `mapstructure:"grpc_listen_addr"`
+
+	// GRPCTLS controls inbound gRPC TLS and mTLS.
+	// Applies to: gRPC protocol.
+	GRPCTLS GRPCTLSConfig `mapstructure:"grpc_tls"`
+
+	// PrimaryGRPCSelectionMode controls primary gRPC target selection.
+	// Supported: round_robin, source_ip_hash.
+	PrimaryGRPCSelectionMode string `mapstructure:"primary_grpc_selection_mode"`
+
+	// ShadowGRPCSelectionMode controls shadow gRPC target selection.
+	// Supported: round_robin, source_ip_hash.
+	ShadowGRPCSelectionMode string `mapstructure:"shadow_grpc_selection_mode"`
+
+	// PrimaryGRPCTargets is the list of primary gRPC backends.
+	// Applies to: gRPC protocol.
+	PrimaryGRPCTargets []GRPCTarget `mapstructure:"primary_grpc_targets"`
+
+	// ShadowGRPCTargets is the list of shadow gRPC backends.
+	// Applies to: gRPC protocol.
+	ShadowGRPCTargets []GRPCTarget `mapstructure:"shadow_grpc_targets"`
+
+	// GRPCShadowTimeout limits the lifetime of shadow gRPC work.
+	// Applies to: gRPC protocol.
+	GRPCShadowTimeout time.Duration `mapstructure:"grpc_shadow_timeout"`
+
+	// GRPCShadowForceMetadata forces gRPC shadowing when present and non-empty.
+	// Applies to: gRPC protocol.
+	GRPCShadowForceMetadata string `mapstructure:"grpc_shadow_force_metadata"`
+
+	// GRPCShadowQueueSize bounds queued request messages for shadow forwarding.
+	// Applies to: gRPC protocol.
+	GRPCShadowQueueSize int `mapstructure:"grpc_shadow_queue_size"`
+
+	// GRPCMaxReceiveMessageBytes limits inbound gRPC receive message size.
+	// Applies to: gRPC protocol.
+	GRPCMaxReceiveMessageBytes int `mapstructure:"grpc_max_receive_message_bytes"`
+
+	// GRPCMaxSendMessageBytes limits outbound gRPC send message size.
+	// Applies to: gRPC protocol.
+	GRPCMaxSendMessageBytes int `mapstructure:"grpc_max_send_message_bytes"`
+
+	// GRPCCompareMode selects the default gRPC comparison mode.
+	// Applies to: gRPC protocol.
+	GRPCCompareMode string `mapstructure:"grpc_compare_mode"`
+
+	// GRPCCompareMetadata lists metadata keys compared by default.
+	// Applies to: gRPC protocol.
+	GRPCCompareMetadata []string `mapstructure:"grpc_compare_metadata"`
+
+	// GRPCRules define ordered gRPC service/method shadow and comparison policy.
+	// Applies to: gRPC protocol.
+	GRPCRules []GRPCRule `mapstructure:"grpc_rules"`
+
+	// TLSCertFile path to the HTTP listener TLS certificate file.
 	TLSCertFile string `mapstructure:"tls_cert_file"`
 
-	// TLSKeyFile path to the TLS key file for the proxy server.
+	// TLSKeyFile path to the HTTP listener TLS key file.
 	TLSKeyFile string `mapstructure:"tls_key_file"`
 
 	// ShadowForceHeader is the header name that (if present) forces shadowing.
@@ -156,13 +230,13 @@ type Config struct {
 	// Applies to: HTTP protocol.
 	ShadowRequestHeaders map[string]string `mapstructure:"shadow_request_headers"`
 
-	// RootCAPath is the path to a common CA certificate for all upstream backends.
+	// RootCAPath is the path to a common CA certificate for HTTP upstream backends.
 	RootCAPath string `mapstructure:"root_ca"`
 
-	// PrimaryRootCA path to the CA certificate specifically for the primary backend.
+	// PrimaryRootCA path to the CA certificate specifically for the primary HTTP backend.
 	PrimaryRootCA string `mapstructure:"primary_root_ca"`
 
-	// ShadowRootCA path to the CA certificate specifically for the shadow backend.
+	// ShadowRootCA path to the CA certificate specifically for the shadow HTTP backend.
 	ShadowRootCA string `mapstructure:"shadow_root_ca"`
 
 	// ShadowSamplePercent percentage of traffic mirrored to the shadow backend (0-100).
@@ -204,7 +278,7 @@ type Config struct {
 	// LogJSON controls whether the logger should output JSON.
 	LogJSON bool `mapstructure:"log_json"`
 
-	// InsecureUpstream allows insecure TLS connections (no verification) to the backends.
+	// InsecureUpstream allows insecure TLS connections to HTTP backends.
 	InsecureUpstream bool `mapstructure:"insecure_upstream"`
 
 	// RunAsUser switches the process user after startup initialization.
@@ -235,6 +309,47 @@ type PathRule struct {
 	CompareHeaders        []string          `mapstructure:"compare_headers"`
 	PrimaryRequestHeaders map[string]string `mapstructure:"primary_request_headers"`
 	ShadowRequestHeaders  map[string]string `mapstructure:"shadow_request_headers"`
+}
+
+// GRPCTLSConfig configures inbound gRPC TLS and mTLS.
+type GRPCTLSConfig struct {
+	Enabled           bool   `mapstructure:"enabled"`
+	Cert              string `mapstructure:"cert"`
+	Key               string `mapstructure:"key"`
+	ClientCA          string `mapstructure:"client_ca"`
+	RequireClientCert bool   `mapstructure:"require_client_cert"`
+	MinTLSVersion     string `mapstructure:"min_tls_version"`
+}
+
+// GRPCTarget describes one upstream gRPC backend.
+type GRPCTarget struct {
+	Name      string        `mapstructure:"name"`
+	Address   string        `mapstructure:"address"`
+	Authority string        `mapstructure:"authority"`
+	TLS       GRPCTargetTLS `mapstructure:"tls"`
+}
+
+// GRPCTargetTLS configures TLS for one upstream gRPC target.
+type GRPCTargetTLS struct {
+	Enabled            bool   `mapstructure:"enabled"`
+	RootCA             string `mapstructure:"root_ca"`
+	ServerName         string `mapstructure:"server_name"`
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify"`
+	ClientCert         string `mapstructure:"client_cert"`
+	ClientKey          string `mapstructure:"client_key"`
+}
+
+// GRPCRule describes service/method-specific gRPC shadow and comparison policy.
+type GRPCRule struct {
+	Name            string            `mapstructure:"name"`
+	Service         string            `mapstructure:"service"`
+	Methods         []string          `mapstructure:"methods"`
+	Shadow          string            `mapstructure:"shadow"`
+	Compare         string            `mapstructure:"compare"`
+	CompareMode     string            `mapstructure:"compare_mode"`
+	CompareMetadata []string          `mapstructure:"compare_metadata"`
+	PrimaryMetadata map[string]string `mapstructure:"primary_metadata"`
+	ShadowMetadata  map[string]string `mapstructure:"shadow_metadata"`
 }
 
 // ObservabilityConfig contains all opt-in metrics and tracing settings.
@@ -312,6 +427,7 @@ func setDefaults(v *viper.Viper) {
 	setProtocolDefaults(v)
 	setHTTPDefaults(v)
 	setMilterDefaults(v)
+	setGRPCDefaults(v)
 	setCompareDefaults(v)
 	setRuntimeDefaults(v)
 	setHeaderDefaults(v)
@@ -354,6 +470,28 @@ func setMilterDefaults(v *viper.Viper) {
 	v.SetDefault("primary_milter_addr", "127.0.0.1:9997")
 	v.SetDefault("shadow_milter_addr", "127.0.0.1:9998")
 	v.SetDefault("milter_timeout", 2*time.Second)
+}
+
+func setGRPCDefaults(v *viper.Viper) {
+	v.SetDefault("grpc_listen_addr", ":9444")
+	v.SetDefault("grpc_tls.enabled", false)
+	v.SetDefault("grpc_tls.cert", "")
+	v.SetDefault("grpc_tls.key", "")
+	v.SetDefault("grpc_tls.client_ca", "")
+	v.SetDefault("grpc_tls.require_client_cert", false)
+	v.SetDefault("grpc_tls.min_tls_version", tlsMinVersionDefault)
+	v.SetDefault("primary_grpc_selection_mode", selectionRoundRobin)
+	v.SetDefault("shadow_grpc_selection_mode", selectionRoundRobin)
+	v.SetDefault("primary_grpc_targets", []GRPCTarget{})
+	v.SetDefault("shadow_grpc_targets", []GRPCTarget{})
+	v.SetDefault("grpc_shadow_timeout", 500*time.Millisecond)
+	v.SetDefault("grpc_shadow_force_metadata", "")
+	v.SetDefault("grpc_shadow_queue_size", 128)
+	v.SetDefault("grpc_max_receive_message_bytes", 4*1024*1024)
+	v.SetDefault("grpc_max_send_message_bytes", 4*1024*1024)
+	v.SetDefault("grpc_compare_mode", grpcCompareModeStatus)
+	v.SetDefault("grpc_compare_metadata", []string{grpcMetadataStatus, grpcMetadataMessage})
+	v.SetDefault("grpc_rules", []GRPCRule{})
 }
 
 func setCompareDefaults(v *viper.Viper) {
@@ -449,6 +587,10 @@ func validate(cfg *Config) error {
 
 	normalizeShadowConfig(cfg)
 
+	if err := normalizeGRPCConfig(cfg); err != nil {
+		return err
+	}
+
 	if err := normalizeHTTPTransportConfig(cfg); err != nil {
 		return err
 	}
@@ -469,7 +611,7 @@ func normalizeProtocol(cfg *Config) error {
 		protocol = protocolHTTP
 	}
 
-	if protocol != protocolHTTP && protocol != protocolMilter {
+	if protocol != protocolHTTP && protocol != protocolMilter && protocol != protocolGRPC {
 		return fmt.Errorf("invalid protocol: %s", cfg.Protocol)
 	}
 
@@ -546,6 +688,439 @@ func normalizeHTTPTransportConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func normalizeGRPCConfig(cfg *Config) error {
+	if cfg.Protocol != protocolGRPC {
+		return nil
+	}
+
+	if err := normalizeGRPCListenerAndTLS(cfg); err != nil {
+		return err
+	}
+
+	if err := normalizeGRPCSelectionModes(cfg); err != nil {
+		return err
+	}
+
+	if err := normalizeGRPCRuntimeConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := normalizeGRPCMetadataConfig(cfg); err != nil {
+		return err
+	}
+
+	return normalizeGRPCTargetAndRuleConfig(cfg)
+}
+
+func normalizeGRPCListenerAndTLS(cfg *Config) error {
+	cfg.GRPCListenAddr = strings.TrimSpace(cfg.GRPCListenAddr)
+	if cfg.GRPCListenAddr == "" {
+		return errors.New("grpc_listen_addr must not be empty when protocol is grpc")
+	}
+
+	return normalizeGRPCTLS(&cfg.GRPCTLS)
+}
+
+func normalizeGRPCSelectionModes(cfg *Config) error {
+	var err error
+	if cfg.PrimaryGRPCSelectionMode, err = normalizeGRPCSelectionMode(cfg.PrimaryGRPCSelectionMode, "primary_grpc_selection_mode"); err != nil {
+		return err
+	}
+
+	if cfg.ShadowGRPCSelectionMode, err = normalizeGRPCSelectionMode(cfg.ShadowGRPCSelectionMode, "shadow_grpc_selection_mode"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func normalizeGRPCRuntimeConfig(cfg *Config) error {
+	if cfg.GRPCShadowTimeout <= 0 {
+		cfg.GRPCShadowTimeout = 500 * time.Millisecond
+	}
+
+	if cfg.GRPCShadowQueueSize <= 0 {
+		cfg.GRPCShadowQueueSize = 128
+	}
+
+	if cfg.GRPCMaxReceiveMessageBytes < 0 {
+		return errors.New("grpc_max_receive_message_bytes must not be negative")
+	}
+
+	if cfg.GRPCMaxSendMessageBytes < 0 {
+		return errors.New("grpc_max_send_message_bytes must not be negative")
+	}
+
+	if cfg.GRPCMaxReceiveMessageBytes == 0 {
+		cfg.GRPCMaxReceiveMessageBytes = 4 * 1024 * 1024
+	}
+
+	if cfg.GRPCMaxSendMessageBytes == 0 {
+		cfg.GRPCMaxSendMessageBytes = 4 * 1024 * 1024
+	}
+
+	return nil
+}
+
+func normalizeGRPCMetadataConfig(cfg *Config) error {
+	var err error
+
+	cfg.GRPCShadowForceMetadata = strings.TrimSpace(cfg.GRPCShadowForceMetadata)
+	if cfg.GRPCShadowForceMetadata != "" {
+		if cfg.GRPCShadowForceMetadata, err = normalizeGRPCMetadataKey(cfg.GRPCShadowForceMetadata); err != nil {
+			return fmt.Errorf("grpc_shadow_force_metadata: %w", err)
+		}
+	}
+
+	if cfg.GRPCCompareMode, err = normalizeGRPCCompareMode(cfg.GRPCCompareMode, false); err != nil {
+		return fmt.Errorf("grpc_compare_mode: %w", err)
+	}
+
+	if cfg.GRPCCompareMetadata, err = normalizeGRPCMetadataKeys(cfg.GRPCCompareMetadata); err != nil {
+		return fmt.Errorf("grpc_compare_metadata: %w", err)
+	}
+
+	return nil
+}
+
+func normalizeGRPCTargetAndRuleConfig(cfg *Config) error {
+	if err := normalizeGRPCTargets(cfg.PrimaryGRPCTargets, "primary_grpc_targets"); err != nil {
+		return err
+	}
+
+	if len(cfg.PrimaryGRPCTargets) == 0 {
+		return errors.New("at least one primary gRPC target must be configured via primary_grpc_targets")
+	}
+
+	if err := normalizeGRPCTargets(cfg.ShadowGRPCTargets, "shadow_grpc_targets"); err != nil {
+		return err
+	}
+
+	if err := normalizeGRPCRules(cfg); err != nil {
+		return err
+	}
+
+	if grpcShadowTargetsRequired(*cfg) && len(cfg.ShadowGRPCTargets) == 0 {
+		return errors.New("at least one shadow gRPC target must be configured when gRPC shadowing can be enabled")
+	}
+
+	return nil
+}
+
+func normalizeGRPCTLS(cfg *GRPCTLSConfig) error {
+	cfg.Cert = strings.TrimSpace(cfg.Cert)
+	cfg.Key = strings.TrimSpace(cfg.Key)
+	cfg.ClientCA = strings.TrimSpace(cfg.ClientCA)
+	cfg.MinTLSVersion = strings.TrimSpace(cfg.MinTLSVersion)
+
+	if cfg.MinTLSVersion == "" {
+		cfg.MinTLSVersion = tlsMinVersionDefault
+	}
+
+	if _, err := ResolveTLSMinVersion(cfg.MinTLSVersion); err != nil {
+		return fmt.Errorf("grpc_tls: %w", err)
+	}
+
+	if cfg.RequireClientCert && cfg.ClientCA == "" {
+		return errors.New("grpc_tls requires client_ca when require_client_cert is true")
+	}
+
+	if cfg.RequireClientCert && !cfg.Enabled {
+		return errors.New("grpc_tls require_client_cert requires enabled TLS")
+	}
+
+	if !cfg.Enabled {
+		return nil
+	}
+
+	if cfg.Cert == "" || cfg.Key == "" {
+		return errors.New("grpc_tls requires cert and key when enabled")
+	}
+
+	return nil
+}
+
+func normalizeGRPCSelectionMode(raw string, field string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return selectionRoundRobin, nil
+	case selectionRoundRobin, selectionSourceIPHash:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("%s must be one of round_robin or source_ip_hash", field)
+	}
+}
+
+func normalizeGRPCTargets(targets []GRPCTarget, field string) error {
+	for i := range targets {
+		targets[i].Name = strings.TrimSpace(targets[i].Name)
+		targets[i].Address = strings.TrimSpace(targets[i].Address)
+		targets[i].Authority = strings.TrimSpace(targets[i].Authority)
+
+		if targets[i].Address == "" {
+			return fmt.Errorf("%s[%d].address is required", field, i)
+		}
+
+		if err := normalizeGRPCTargetTLS(&targets[i].TLS, fmt.Sprintf("%s[%d].tls", field, i)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func normalizeGRPCTargetTLS(cfg *GRPCTargetTLS, field string) error {
+	cfg.RootCA = strings.TrimSpace(cfg.RootCA)
+	cfg.ServerName = strings.TrimSpace(cfg.ServerName)
+	cfg.ClientCert = strings.TrimSpace(cfg.ClientCert)
+	cfg.ClientKey = strings.TrimSpace(cfg.ClientKey)
+
+	if cfg.ClientCert == "" && cfg.ClientKey == "" {
+		return nil
+	}
+
+	if !cfg.Enabled {
+		return fmt.Errorf("%s client_cert/client_key require enabled TLS", field)
+	}
+
+	if cfg.ClientCert == "" || cfg.ClientKey == "" {
+		return fmt.Errorf("%s client_cert and client_key must be configured together", field)
+	}
+
+	return nil
+}
+
+func normalizeGRPCRules(cfg *Config) error {
+	if cfg.GRPCRules == nil {
+		cfg.GRPCRules = []GRPCRule{}
+
+		return nil
+	}
+
+	for i := range cfg.GRPCRules {
+		if err := normalizeGRPCRule(&cfg.GRPCRules[i], i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func normalizeGRPCRule(rule *GRPCRule, index int) error {
+	rule.Name = strings.TrimSpace(rule.Name)
+	rule.Service = strings.TrimSpace(rule.Service)
+
+	if rule.Service == "" {
+		return fmt.Errorf("grpc_rules[%d].service is required", index)
+	}
+
+	if err := normalizeGRPCRuleMethods(rule, index); err != nil {
+		return err
+	}
+
+	var err error
+	if rule.Shadow, err = normalizeGRPCRuleShadow(rule.Shadow); err != nil {
+		return fmt.Errorf("grpc_rules[%d].shadow: %w", index, err)
+	}
+
+	if rule.Compare, err = normalizeGRPCRuleCompare(rule.Compare); err != nil {
+		return fmt.Errorf("grpc_rules[%d].compare: %w", index, err)
+	}
+
+	if rule.CompareMode, err = normalizeGRPCCompareMode(rule.CompareMode, true); err != nil {
+		return fmt.Errorf("grpc_rules[%d].compare_mode: %w", index, err)
+	}
+
+	if rule.CompareMetadata, err = normalizeGRPCMetadataKeys(rule.CompareMetadata); err != nil {
+		return fmt.Errorf("grpc_rules[%d].compare_metadata: %w", index, err)
+	}
+
+	if rule.PrimaryMetadata, err = normalizeGRPCOverlayMetadataMap(rule.PrimaryMetadata); err != nil {
+		return fmt.Errorf("grpc_rules[%d].primary_metadata: %w", index, err)
+	}
+
+	if rule.ShadowMetadata, err = normalizeGRPCOverlayMetadataMap(rule.ShadowMetadata); err != nil {
+		return fmt.Errorf("grpc_rules[%d].shadow_metadata: %w", index, err)
+	}
+
+	return nil
+}
+
+func normalizeGRPCRuleMethods(rule *GRPCRule, index int) error {
+	if rule.Methods == nil {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(rule.Methods))
+	for _, raw := range rule.Methods {
+		method := strings.TrimSpace(raw)
+		if method == "" || strings.Contains(method, "/") {
+			return fmt.Errorf("grpc_rules[%d].methods contains invalid method %q", index, raw)
+		}
+
+		normalized = append(normalized, method)
+	}
+
+	rule.Methods = normalized
+
+	return nil
+}
+
+func normalizeGRPCRuleShadow(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return grpcRuleShadowInherit, nil
+	case grpcRuleShadowInherit, grpcRuleShadowAuto, grpcRuleShadowNever, grpcRuleShadowAlways:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: inherit, auto, never, always)", raw)
+	}
+}
+
+func normalizeGRPCRuleCompare(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		return grpcRuleCompareInherit, nil
+	case grpcRuleCompareInherit, grpcRuleCompareOn, grpcRuleCompareOff:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: inherit, on, off)", raw)
+	}
+}
+
+func normalizeGRPCCompareMode(raw string, allowEmpty bool) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "":
+		if allowEmpty {
+			return "", nil
+		}
+
+		return grpcCompareModeStatus, nil
+	case grpcCompareModeStatus, grpcCompareModeStatusMetadata, grpcCompareModeMessageCount, grpcCompareModeMessageHash:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported value %q (allowed: status, status_metadata, message_count, message_hash)", raw)
+	}
+}
+
+func normalizeGRPCMetadataKeys(names []string) ([]string, error) {
+	if names == nil {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(names))
+
+	seen := make(map[string]struct{}, len(names))
+	for _, raw := range names {
+		name, err := normalizeGRPCMetadataKey(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("duplicate gRPC metadata key %q", name)
+		}
+
+		seen[name] = struct{}{}
+		normalized = append(normalized, name)
+	}
+
+	return normalized, nil
+}
+
+func normalizeGRPCOverlayMetadataMap(values map[string]string) (map[string]string, error) {
+	if values == nil {
+		return nil, nil
+	}
+
+	normalized := make(map[string]string, len(values))
+	for raw, value := range values {
+		name, err := normalizeGRPCMetadataKey(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := validateGRPCOverlayMetadataKey(name); err != nil {
+			return nil, err
+		}
+
+		if _, exists := normalized[name]; exists {
+			return nil, fmt.Errorf("duplicate gRPC metadata key %q", name)
+		}
+
+		normalized[name] = value
+	}
+
+	return normalized, nil
+}
+
+func normalizeGRPCMetadataKey(raw string) (string, error) {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	if key == "" {
+		return "", errors.New("gRPC metadata key must not be empty")
+	}
+
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+
+		return "", fmt.Errorf("invalid gRPC metadata key %q", raw)
+	}
+
+	return key, nil
+}
+
+func validateGRPCOverlayMetadataKey(key string) error {
+	if strings.Contains(key, ":") {
+		return fmt.Errorf("reserved gRPC metadata key %q", key)
+	}
+
+	if key == "content-type" || key == "te" {
+		return fmt.Errorf("reserved gRPC metadata key %q", key)
+	}
+
+	if strings.HasPrefix(key, "grpc-") {
+		return fmt.Errorf("reserved gRPC metadata key %q", key)
+	}
+
+	if strings.HasSuffix(key, "-bin") {
+		return fmt.Errorf("binary gRPC metadata overlay %q is not supported", key)
+	}
+
+	return nil
+}
+
+func grpcShadowTargetsRequired(cfg Config) bool {
+	globalShadow := cfg.ShadowSamplePercent > 0 || cfg.GRPCShadowForceMetadata != ""
+	if len(cfg.GRPCRules) == 0 {
+		return globalShadow
+	}
+
+	required := false
+
+	for _, rule := range cfg.GRPCRules {
+		switch rule.Shadow {
+		case grpcRuleShadowAlways:
+			required = true
+		case grpcRuleShadowAuto, grpcRuleShadowInherit:
+			if globalShadow {
+				required = true
+			}
+		}
+
+		if rule.Service == "*" && len(rule.Methods) == 0 {
+			return required
+		}
+	}
+
+	return required
 }
 
 func normalizeCompareConfig(cfg *Config) {
@@ -881,13 +1456,13 @@ func SplitBasicAuthCredentials(credentials string) (string, string, error) {
 
 // ResolveTLSMinVersion converts a config value into a crypto/tls version constant.
 func ResolveTLSMinVersion(value string) (uint16, error) {
-	switch value {
-	case "", "1.2":
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1.2", "tls1.2":
 		return tls.VersionTLS12, nil
-	case "1.3":
+	case "1.3", "tls1.3":
 		return tls.VersionTLS13, nil
 	default:
-		return 0, fmt.Errorf("unsupported min_tls_version %q (allowed: 1.2, 1.3)", value)
+		return 0, fmt.Errorf("unsupported min_tls_version %q (allowed: 1.2, TLS1.2, 1.3, TLS1.3)", value)
 	}
 }
 

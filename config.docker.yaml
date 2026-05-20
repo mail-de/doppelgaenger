@@ -1,16 +1,49 @@
 # Global Settings
 # ------------------------------------------------------------------------------
-# protocol: selects the proxy protocol. Supported values: "http" or "milter".
+# protocol: selects the proxy protocol. Supported values: "http", "grpc", or "milter".
 protocol: http
 
 # listen_addr: the address the HTTP proxy listens on.
 listen_addr: ":8443"
 
-# tls_cert_file: path to the TLS certificate file for the proxy server.
+# tls_cert_file: path to the TLS certificate file for the HTTP proxy listener.
 tls_cert_file: "/certs/cert.pem"
 
-# tls_key_file: path to the TLS key file for the proxy server.
+# tls_key_file: path to the TLS key file for the HTTP proxy listener.
 tls_key_file: "/certs/key.pem"
+
+# gRPC Adapter Settings
+# ------------------------------------------------------------------------------
+# These settings are inactive while protocol is http, but document the Docker
+# shape for switching this file to protocol: grpc.
+grpc_listen_addr: ":9444"
+grpc_tls:
+  enabled: false
+  # cert: "/certs/grpc.crt"
+  # key: "/certs/grpc.key"
+  # client_ca: "/certs/clients-ca.pem"
+  require_client_cert: false
+  min_tls_version: "1.2"
+primary_grpc_targets: []
+# Example:
+# primary_grpc_targets:
+#   - name: primary
+#     address: "fakegrpcserver-primary:9445"
+#     tls:
+#       enabled: false
+#       # client_cert: "/certs/grpc-client.crt"
+#       # client_key: "/certs/grpc-client.key"
+primary_grpc_selection_mode: "round_robin"
+shadow_grpc_targets: []
+# Example:
+# shadow_grpc_targets:
+#   - name: shadow
+#     address: "fakegrpcserver-shadow:9446"
+#     tls:
+#       enabled: false
+#       # client_cert: "/certs/grpc-client.crt"
+#       # client_key: "/certs/grpc-client.key"
+shadow_grpc_selection_mode: "round_robin"
 
 # HTTP Adapter Settings
 # ------------------------------------------------------------------------------
@@ -38,6 +71,10 @@ shadow_sample_percent: 5
 # shadow_force_header: header name that (if present) forces shadowing.
 shadow_force_header: "X-Shadow"
 
+# grpc_shadow_force_metadata: metadata key that forces gRPC shadowing when
+# present and non-empty, unless a matched grpc_rules entry uses shadow: never.
+grpc_shadow_force_metadata: "x-shadow"
+
 # primary_request_headers: optional static headers added to requests sent to primary.
 # path_rules[].primary_request_headers can override these values per matched path.
 primary_request_headers: {}
@@ -54,6 +91,12 @@ shadow_burst: 400
 
 # shadow_timeout: time limit for requests to the shadow backend.
 shadow_timeout: "150ms"
+
+# grpc_shadow_timeout and grpc_shadow_queue_size bound shadow gRPC work only.
+grpc_shadow_timeout: "500ms"
+grpc_shadow_queue_size: 128
+grpc_max_receive_message_bytes: 4194304
+grpc_max_send_message_bytes: 4194304
 
 # max_backend_body_bytes: limits the size of the request body sent to backends.
 max_backend_body_bytes: 32768
@@ -115,6 +158,12 @@ compare_headers:
 # compare_mode: selects the comparison mode (nginx, header, json, html).
 compare_mode: "nginx"
 
+# grpc_compare_mode: status, status_metadata, message_count, or message_hash.
+grpc_compare_mode: "status"
+grpc_compare_metadata:
+  - "grpc-status"
+  - "grpc-message"
+
 # compare_json_strict: controls strict JSON comparison behavior.
 compare_json_strict: false
 
@@ -154,6 +203,27 @@ path_rules: []
 #     shadow: never
 #     compare: off
 
+# grpc_rules: optional ordered gRPC service/method policy. Empty preserves
+# global gRPC behavior. If non-empty and no rule matches, the RPC is primary-only.
+grpc_rules: []
+# Example:
+# grpc_rules:
+#   - name: auth-shadow
+#     service: "nauthilus.auth.v1.AuthService"
+#     methods: ["Authenticate", "LookupIdentity", "ListAccounts"]
+#     shadow: auto
+#     compare: on
+#     compare_mode: status_metadata
+#     compare_metadata: ["grpc-status", "grpc-message", "x-nauthilus-session"]
+#     primary_metadata:
+#       authorization: "Basic primary-token"
+#     shadow_metadata:
+#       authorization: "Basic shadow-token"
+#   - name: default-primary-only
+#     service: "*"
+#     shadow: never
+#     compare: off
+
 # Logging Settings
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
@@ -166,6 +236,7 @@ log_json: false
 # ------------------------------------------------------------------------------
 # All observability features are opt-in. W3C trace context is propagated when
 # a trace is active; trace_id_header adds the bare trace ID for downstream logs.
+# For gRPC, this is emitted as lowercase metadata (for example x-trace-id).
 observability:
   prometheus_enabled: false
   prometheus_address: "127.0.0.1"

@@ -1,13 +1,13 @@
-# HTTP Shadow Proxy
+# Doppelgaenger Shadow Proxy
 
-A high-performance HTTP proxy written in Go that mirrors a percentage of incoming traffic to a shadow backend for testing and comparison purposes, while serving requests via a primary backend.
+A high-performance proxy written in Go that mirrors a percentage of incoming traffic to a shadow backend for testing and comparison purposes, while serving responses from a primary backend.
 
 ## Features
 
 - **Traffic Shadowing**: Mirrored requests to a shadow backend without affecting the primary response.
-- **Protocol Modes**: Supports HTTP shadow proxying and a TCP Milter proxy for mail filter testing.
+- **Protocol Modes**: Supports HTTP shadow proxying, generic gRPC shadow proxying, and a TCP Milter proxy for mail filter testing.
 - **Sampling & Rate Limiting**: Configure the percentage of traffic to shadow and apply rate limits (RPS/Burst) to protect the shadow environment.
-- **Response Comparison**: Compares headers and optional payloads between primary and shadow responses and logs differences.
+- **Response Comparison**: Compares HTTP headers/payloads, gRPC status/metadata/message counts/message hashes, or Milter decisions and logs differences.
 - **Structured Logging**: Uses `slog` for detailed, machine-readable logs including performance metrics and header diffs.
 - **Observability**: Optional OpenMetrics/Prometheus endpoint plus OpenTelemetry OTLP traces and metrics for ingress, primary, shadow, and comparison paths.
 - **TLS Support**: Supports both incoming TLS and secure communication with upstream backends (with custom CA support).
@@ -21,13 +21,13 @@ The proxy uses a YAML configuration file loaded via `viper`. By default, it look
 The configuration is categorized into global, protocol-specific, and feature-specific settings.
 
 #### Global & Common Settings
-These settings apply to both HTTP and Milter protocols unless otherwise specified.
+These settings apply across protocols unless a protocol-specific section says otherwise.
 
-- `protocol`: Selects the proxy protocol (`http` or `milter`).
-- `tls_cert_file` / `tls_key_file`: Paths to the TLS certificate and key for the proxy server.
-- `root_ca`: Path to a common CA certificate for all upstream backends.
-- `primary_root_ca` / `shadow_root_ca`: CA certificates for specific backends.
-- `insecure_upstream`: Allows insecure TLS connections (no verification) to backends.
+- `protocol`: Selects the proxy protocol (`http`, `grpc`, or `milter`).
+- `tls_cert_file` / `tls_key_file`: Paths to the TLS certificate and key for the HTTP listener.
+- `root_ca`: Path to a common CA certificate for HTTP upstream backends.
+- `primary_root_ca` / `shadow_root_ca`: CA certificates for specific HTTP backends.
+- `insecure_upstream`: Allows insecure TLS connections (no verification) to HTTP backends.
 - `shadow_sample_percent`: Percentage of traffic to mirror (0-100).
 - `shadow_rps`: Max requests per second for the shadow backend (0 disables).
 - `shadow_burst`: Token bucket burst capacity for shadow rate limiting.
@@ -68,6 +68,19 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `primary_milter_addr` / `shadow_milter_addr`: TCP addresses of the Milter backends.
 - `milter_timeout`: Timeout for Milter upstream operations.
 
+#### gRPC-specific Settings
+- `grpc_listen_addr`: TCP address for the gRPC proxy listener. Plaintext gRPC uses HTTP/2 prior knowledge when `grpc_tls.enabled` is false.
+- `grpc_tls`: Inbound listener TLS/mTLS (`enabled`, `cert`, `key`, `client_ca`, `require_client_cert`, `min_tls_version`). `client_ca` plus `require_client_cert` enables client certificate verification.
+- `primary_grpc_targets` / `shadow_grpc_targets`: Upstream gRPC target pools. Each target has `name`, `address`, optional `authority`, and `tls` settings (`enabled`, `root_ca`, `server_name`, `client_cert`, `client_key`, `insecure_skip_verify`).
+- `primary_grpc_selection_mode` / `shadow_grpc_selection_mode`: Target selection strategy (`round_robin` or `source_ip_hash`).
+- `grpc_shadow_timeout`: Best-effort lifetime for shadow gRPC streams only. The primary stream is not constrained by this timeout.
+- `grpc_shadow_force_metadata`: Incoming metadata key that forces shadowing when present and non-empty, unless the matched rule says `shadow: never`.
+- `grpc_shadow_queue_size`: Bounded request-message queue for shadow forwarding. When full, the primary stream continues and the shadow path is marked `queue_full`.
+- `grpc_max_receive_message_bytes` / `grpc_max_send_message_bytes`: Message size limits applied to inbound and outbound gRPC calls.
+- `grpc_compare_mode`: Default comparison mode (`status`, `status_metadata`, `message_count`, or `message_hash`).
+- `grpc_compare_metadata`: Metadata/trailer keys compared by `status_metadata`. Use explicit allowlists; arbitrary request metadata is not logged.
+- `grpc_rules`: Ordered service/method policy for gRPC shadowing, comparison, and primary/shadow metadata overlays.
+
 #### Observability Settings
 - `observability.prometheus_enabled`: Starts the dedicated OpenMetrics/Prometheus scrape endpoint.
 - `observability.prometheus_address` / `observability.prometheus_port` / `observability.prometheus_path`: Bind settings for the scrape endpoint.
@@ -81,7 +94,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 - `observability.otel_exporter_otlp_headers`: Optional headers for the OTLP exporter.
 - `observability.otel_exporter_otlp_insecure`: Uses insecure OTLP HTTP transport.
 - `observability.otel_sample_ratio`: Parent-based trace sampling ratio from `0.0` to `1.0`.
-- `observability.trace_id_header`: Bare trace ID header added to responses and outgoing HTTP primary/shadow requests; `traceparent` is always the standard W3C propagation carrier.
+- `observability.trace_id_header`: Bare trace ID header/metadata added to outgoing HTTP and gRPC primary/shadow requests; `traceparent` is always the standard W3C propagation carrier.
 
 ### Configuration Example
 
@@ -91,7 +104,7 @@ These settings apply to both HTTP and Milter protocols unless otherwise specifie
 # run_as_group: "nogroup"
 # chroot: "/var/empty/doppelgaenger"
 
-protocol: http # http or milter
+protocol: http # http, grpc, or milter
 listen_addr: ":8080"
 primary_base_urls:
   - "https://127.0.0.1:9001"
@@ -225,6 +238,76 @@ path_mapping:
       shadow: "/legacy/$1"
 ```
 
+### gRPC Configuration Example
+
+```yaml
+protocol: grpc
+grpc_listen_addr: ":9444"
+grpc_tls:
+  enabled: true
+  cert: "/etc/doppelgaenger/grpc.crt"
+  key: "/etc/doppelgaenger/grpc.key"
+  client_ca: "/etc/doppelgaenger/clients-ca.pem"
+  require_client_cert: true
+  min_tls_version: "1.2"
+
+primary_grpc_targets:
+  - name: primary
+    address: "primary.example.net:9443"
+    authority: "primary.example.net"
+    tls:
+      enabled: true
+      root_ca: "/etc/doppelgaenger/primary-ca.pem"
+      server_name: "primary.example.net"
+      # client_cert: "/etc/doppelgaenger/primary-client.crt"
+      # client_key: "/etc/doppelgaenger/primary-client.key"
+
+shadow_grpc_targets:
+  - name: shadow
+    address: "shadow.example.net:9443"
+    authority: "shadow.example.net"
+    tls:
+      enabled: true
+      root_ca: "/etc/doppelgaenger/shadow-ca.pem"
+      server_name: "shadow.example.net"
+      # client_cert: "/etc/doppelgaenger/shadow-client.crt"
+      # client_key: "/etc/doppelgaenger/shadow-client.key"
+
+shadow_sample_percent: 0
+shadow_rps: 200
+shadow_burst: 400
+grpc_shadow_force_metadata: "x-shadow"
+grpc_shadow_timeout: "500ms"
+grpc_shadow_queue_size: 128
+grpc_compare_mode: status
+grpc_compare_metadata:
+  - "grpc-status"
+  - "grpc-message"
+
+grpc_rules:
+  - name: auth-shadow
+    service: "nauthilus.auth.v1.AuthService"
+    methods: ["Authenticate", "LookupIdentity", "ListAccounts"]
+    shadow: auto
+    compare: on
+    compare_mode: status_metadata
+    compare_metadata:
+      - "grpc-status"
+      - "grpc-message"
+      - "x-nauthilus-session"
+    primary_metadata:
+      authorization: "Basic primary-token"
+    shadow_metadata:
+      authorization: "Basic shadow-token"
+
+  - name: default-primary-only
+    service: "*"
+    shadow: never
+    compare: off
+```
+
+gRPC targets are not configured with HTTP URLs. Use `address` for the gRPC authority endpoint and `tls` for transport security. Metadata overlays are gRPC metadata, not HTTP headers; binary metadata (`*-bin`) and transport-controlled keys such as `grpc-*`, `content-type`, `te`, and pseudo-headers are rejected.
+
 #### HTTP Path Rules
 
 `path_rules` is an optional top-level HTTP-only list. When it is absent or
@@ -282,6 +365,42 @@ the path for primary and shadow backends. The force header can still bypass the
 shadow rate limiter on allowed paths, preserving the global override behavior;
 `shadow: never` is authoritative and wins over the force header.
 
+#### gRPC Rules
+
+`grpc_rules` is an optional top-level gRPC-only list. Rules are evaluated in
+order and the first rule matching the service and method wins. If the list is
+empty, global gRPC shadow and comparison settings apply. If the list is
+non-empty and no rule matches, the RPC is primary-only and comparison is
+skipped.
+
+Rule fields:
+
+- `name`: Optional stable name used in logs. If omitted, a deterministic name
+  such as `rule[0]` is used.
+- `service`: Required exact service name, for example
+  `nauthilus.auth.v1.AuthService`. The special value `*` is a catch-all.
+- `methods`: Optional method names without the service prefix. Empty or omitted
+  means all methods for the matched service.
+- `shadow`: `inherit`, `auto`, `never`, or `always`. `never` blocks force
+  metadata; `always` still respects runtime safety such as target availability.
+- `compare`: `inherit`, `on`, or `off`.
+- `compare_mode`: Optional per-rule mode (`status`, `status_metadata`,
+  `message_count`, `message_hash`).
+- `compare_metadata`: Optional per-rule metadata/trailer allowlist. If omitted,
+  `grpc_compare_metadata` is used. If explicitly `[]`, no metadata keys are
+  compared.
+- `primary_metadata` / `shadow_metadata`: Per-rule gRPC metadata overlays. They
+  are applied independently after incoming metadata is cloned and trace context
+  is preserved.
+
+The generic gRPC proxy treats payloads as opaque messages. Unary and streaming
+RPCs are forwarded at message level, not by buffering full request or response
+bodies. Shadow streaming is best-effort: queue-full, target errors, and shadow
+timeouts are logged and observed, but the client always receives the primary
+payload and primary status. `message_hash` uses an incremental SHA-256 over the
+response-message sequence; descriptor-aware protobuf field diffs are intentionally
+out of scope for the current generic mode.
+
 #### Path Mapping Modes
 
 - **direct**: Forwards the incoming request path unchanged to both primary and shadow backends.
@@ -299,9 +418,9 @@ If no rule matches in `rewrite` mode, or if `primary`/`shadow` fields are empty,
 - Supplementary groups are derived automatically from `run_as_user` (all groups of that user).
 - If required runtime files are missing inside the jail (`/etc/hosts`, `/etc/resolv.conf`, `/etc/nsswitch.conf`), startup fails with a descriptive error.
 
-## Fake Server
+## Fake Servers And gRPC Probe
 
-The fake server is a standalone program intended to act as primary and shadow backends for testing. It mirrors incoming request headers into response headers and can optionally randomize selected headers.
+`fakehttpserver` is a standalone program intended to act as primary and shadow HTTP backends for testing. It mirrors incoming request headers into response headers and can optionally randomize selected headers.
 
 ### Fake Server Configuration (`fakehttpserver.yaml`)
 ```yaml
@@ -311,23 +430,56 @@ random_chance: 10
 log_json: true
 ```
 
+`fakegrpcserver` is a generic gRPC backend for blackbox tests. It uses the same raw message codec as the proxy and supports unary echo, server-stream count, client-stream count, and bidi echo modes. It can set response headers/trailers, return a configured gRPC status, override status or delay from request metadata, and writes JSONL records with the full method, selected metadata excerpt, trace metadata, message counts, and final status.
+
+Example:
+
+```bash
+fakegrpcserver \
+  -listen 127.0.0.1:9445 \
+  -mode auto \
+  -response-prefix primary: \
+  -header x-backend=primary \
+  -trailer x-trailer=primary \
+  -log-metadata-key traceparent \
+  -log-metadata-key x-trace-id
+```
+
+`grpcprobe` sends raw payloads to arbitrary gRPC methods without generated stubs. It supports unary and simple streaming calls, repeated `-metadata key=value`, expected status checks, expected response message counts, expected response messages, and optional header/trailer output.
+
+Example:
+
+```bash
+grpcprobe \
+  -addr 127.0.0.1:9444 \
+  -method /example.Service/Unary \
+  -mode unary \
+  -payload test \
+  -metadata x-shadow=force \
+  -expect-status OK \
+  -expect-count 1
+```
+
 ## How It Works
 
-1. **Request Arrival**: The proxy receives an HTTP(S) request.
-2. **Primary Request**: The request is forwarded to one backend from `primary_base_urls` according to `primary_selection_mode`. Per-rule `primary_request_headers` override global primary headers when present. The response from that backend is returned to the client.
-3. **Shadow Decision**: Based on the first matching `path_rules` entry, or on global `shadow_sample_percent` and `shadow_force_header` when no rules are configured, the proxy decides whether to shadow the request.
-4. **Shadow Request**: If selected, the request is mirrored to one backend from `shadow_base_urls` according to `shadow_selection_mode` asynchronously and outside the client response path. Per-rule `shadow_request_headers` override global shadow headers when present.
-5. **Comparison**: The proxy compares headers and (optionally) payloads between primary and shadow responses based on the resolved path rule or the global comparison settings.
-6. **Observability & Logging**: A single structured log line is generated containing details about both requests, including durations and any header differences found. When tracing is active, outgoing HTTP primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID header.
+1. **Request Arrival**: The proxy receives an HTTP(S), gRPC, or Milter request.
+2. **Primary Request**: The request is forwarded to one primary backend according to the protocol-specific primary target selection mode. The response from that backend is returned to the client.
+3. **Shadow Decision**: HTTP uses `path_rules` plus `shadow_force_header`; gRPC uses `grpc_rules` plus `grpc_shadow_force_metadata`; Milter uses the global sampling controls.
+4. **Shadow Request**: If selected, the request is mirrored to a shadow backend asynchronously and outside the client response path. HTTP and gRPC per-rule overlays are applied independently to primary and shadow calls.
+5. **Comparison**: The proxy compares primary and shadow results using the resolved protocol-specific comparison mode.
+6. **Observability & Logging**: A single structured log line is generated containing details about primary and shadow work, durations, selected targets, statuses, comparison outcome, and sanitized diffs. When tracing is active, outgoing HTTP and gRPC primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID carrier.
 
 ### Milter Mode
 When `protocol: milter`, the proxy listens on `milter_listen_addr` and forwards incoming Milter frames to the primary backend, mirrors them to the shadow backend, compares decisions/raw frames, and logs any differences.
+
+### gRPC Mode
+When `protocol: grpc`, the proxy listens on `grpc_listen_addr` with optional TLS/mTLS and forwards arbitrary gRPC methods through a generic unknown-service handler. Primary headers, trailers, payload messages, and status are client-visible. Shadow headers, trailers, payload counts/hashes, status, queue-full conditions, timeouts, and errors are used for logs, metrics, traces, and comparison only.
 
 ## Observability
 
 Observability is disabled by default. When enabled, the proxy records:
 
-- Incoming HTTP requests and Milter frames with outcome, duration, and shadow-start labels.
+- Incoming HTTP requests, gRPC RPCs, and Milter frames with outcome, duration, and shadow-start labels.
 - Outgoing Primary and Shadow backend exchanges with protocol, target, method/command, status/decision, result, and duration.
 - Primary/Shadow comparison outcomes (`same`, `diff`, `error`, `skipped`).
 
@@ -354,7 +506,15 @@ observability:
   otel_sample_ratio: 1.0
 ```
 
-Incoming HTTP `traceparent` is extracted and continued. Outgoing HTTP requests to Primary and Shadow receive the active W3C trace context and the configured `trace_id_header` value. In Milter mode there is no standard header carrier, so the proxy emits spans/metrics for the TCP frame and backend exchanges but does not invent protocol payload fields.
+Incoming HTTP and gRPC `traceparent` is extracted and continued. Outgoing HTTP and gRPC requests to Primary and Shadow receive the active W3C trace context and the configured `trace_id_header` value (`x-trace-id` as gRPC metadata). In Milter mode there is no standard header carrier, so the proxy emits spans/metrics for the TCP frame and backend exchanges but does not invent protocol payload fields.
+
+gRPC spans use these names:
+
+- `gRPC /service/Method`
+- `gRPC primary /service/Method`
+- `gRPC shadow /service/Method`
+
+gRPC metrics reuse the existing metric names with `protocol="grpc"`, full method labels such as `method="/nauthilus.auth.v1.AuthService/Authenticate"`, backend `target="primary"` / `target="shadow"`, and comparison results `same`, `diff`, `skipped`, or `error`.
 
 ## Building and Running
 
@@ -376,6 +536,8 @@ Incoming HTTP `traceparent` is extracted and continued. Outgoing HTTP requests t
 ```bash
 go build -o doppelgaenger main.go
 go build -o fakehttpserver cmd/fakehttpserver/main.go
+go build -o fakegrpcserver ./cmd/fakegrpcserver
+go build -o grpcprobe ./cmd/grpcprobe
 ```
 
 ### SBOM
@@ -388,6 +550,7 @@ Generates `sbom.cdx.json` in the project directory. During the Docker image buil
 ```bash
 make e2e-http
 make e2e-milter
+make e2e-grpc
 make e2e-docker
 make e2e
 ```
@@ -396,7 +559,11 @@ The E2E checks build local test binaries and run real doppelgaenger processes
 against fake Primary/Shadow backends. The HTTP check verifies W3C trace context
 and `X-Trace-ID` propagation, Primary/Shadow routing, path rewriting, request
 IDs, per-target headers, body limits, OpenMetrics counters, and OTLP
-trace/metric export. The Milter check verifies Primary/Shadow frame forwarding,
+trace/metric export. The gRPC check verifies primary-only and forced-shadow
+unary calls, `shadow: never`, primary/shadow metadata overlays, primary-result
+preservation on shadow errors, server-stream message counts, OpenMetrics gRPC
+series, OTLP gRPC spans, and trace-context propagation to both backends. The
+Milter check verifies Primary/Shadow frame forwarding,
 no-shadow sampling, Milter comparison metrics, and OTLP spans/metrics without
 mutating Milter payloads. The Docker check verifies that the image, compose
 mapping, and mounted runtime config agree on the exposed listener.

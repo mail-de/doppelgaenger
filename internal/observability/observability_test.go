@@ -13,6 +13,7 @@ import (
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"google.golang.org/grpc/metadata"
 
 	"doppelgaenger/internal/config"
 )
@@ -143,5 +144,27 @@ func TestTraceIDHeaderUsesExtractedTraceContext(t *testing.T) {
 
 	if got := out.Get("X-Trace-ID"); got != traceID {
 		t.Fatalf("expected X-Trace-ID %s, got %q", traceID, got)
+	}
+}
+
+func TestGRPCTraceMetadataUsesExtractedTraceContext(t *testing.T) {
+	obs, err := New(config.Config{}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("new observability: %v", err)
+	}
+
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+	in := metadata.Pairs("traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+	ctx := obs.ExtractGRPCContext(context.Background(), in)
+	out := metadata.MD{}
+	obs.InjectGRPCTraceContext(ctx, out)
+
+	if got := strings.Join(out.Get("traceparent"), ","); !strings.Contains(got, traceID) {
+		t.Fatalf("expected propagated traceparent to contain trace id %s, got %q", traceID, got)
+	}
+
+	if got := strings.Join(out.Get("x-trace-id"), ","); got != traceID {
+		t.Fatalf("expected x-trace-id %s, got %q", traceID, got)
 	}
 }
