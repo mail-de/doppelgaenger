@@ -346,6 +346,10 @@ grpc_rules: []
 # Applies to: All protocols.
 log_session_only_on_diff: true
 
+# log_only_on_diff: emit proxy result logs only for differences, shadow errors, or comparison errors.
+# Applies to: HTTP and gRPC protocols.
+log_only_on_diff: false
+
 # log_json: whether the logger should output JSON.
 # Applies to: All protocols.
 log_json: true

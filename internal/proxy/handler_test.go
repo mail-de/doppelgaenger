@@ -32,6 +32,7 @@ const (
 	testBasicPrimary    = "Basic primary-secret"
 	testBasicShadow     = "Basic shadow-secret"
 	testMetricsRegex    = "^/metrics$"
+	testDiffOnlyRule    = "diff-only"
 )
 
 func TestEnsureRequestIDPreservesHeader(t *testing.T) {
@@ -421,6 +422,42 @@ func TestHandlePathRuleCompareHeadersExplicitEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleLogOnlyOnDiffSuppressesCleanComparisonLog(t *testing.T) {
+	harness := newRuntimeHarness(t, config.Config{
+		ShadowSamplePercent: 100,
+		CompareMode:         compare.ModeHeader,
+		CompareHeaders:      []string{testAuthStatus},
+		LogOnlyOnDiff:       true,
+		PathRules: []config.PathRule{
+			{Name: testDiffOnlyRule, Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOn)},
+		},
+	}, nil)
+
+	performRuntimeRequest(t, harness.handler, http.MethodGet, testAuthPath, nil)
+
+	waitForShadowSend(t, harness.adapter, 1)
+	assertNoRuntimeLog(t, harness.logs)
+}
+
+func TestHandleLogOnlyOnDiffKeepsDiffLog(t *testing.T) {
+	harness := newRuntimeHarness(t, config.Config{
+		ShadowSamplePercent: 100,
+		CompareMode:         compare.ModeHeader,
+		CompareHeaders:      []string{testAuthStatus},
+		LogOnlyOnDiff:       true,
+		PathRules: []config.PathRule{
+			{Name: testDiffOnlyRule, Match: testAuthPathRegex, Shadow: string(pathrules.ShadowModeAlways), Compare: string(pathrules.CompareDecisionOn)},
+		},
+	}, nil)
+	harness.adapter.shadowResponse.Header.Set(testAuthStatus, "shadow")
+
+	performRuntimeRequest(t, harness.handler, http.MethodGet, testAuthPath, nil)
+
+	logFields := waitForRuntimeLog(t, harness.logs)
+	assertLogField(t, logFields, "diff", true)
+	assertLogField(t, logFields, "path_rule", testDiffOnlyRule)
+}
+
 func TestHandleAddsPathRuleRequestHeadersToBackendEvents(t *testing.T) {
 	harness := newRuntimeHarness(t, config.Config{
 		ShadowSamplePercent: 100,
@@ -618,6 +655,31 @@ func waitForRuntimeLog(t *testing.T, logs <-chan map[string]any) map[string]any 
 	}
 
 	return nil
+}
+
+func waitForShadowSend(t *testing.T, adapter *runtimeTestAdapter, expected int) {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if adapter.shadowSendCount() == expected {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %d shadow sends, got %d", expected, adapter.shadowSendCount())
+}
+
+func assertNoRuntimeLog(t *testing.T, logs <-chan map[string]any) {
+	t.Helper()
+
+	select {
+	case fields := <-logs:
+		t.Fatalf("expected no handler log, got %#v", fields)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func assertLogField(t *testing.T, fields map[string]any, key string, expected any) {

@@ -685,6 +685,10 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		h.observability.ObserveComparison(payload.ctx, protocolHTTP, comparisonMetricResult(payload, hasDiff))
 	}
 
+	if h.shouldSuppressHTTPLog(payload, hasDiff, shadowErr) {
+		return
+	}
+
 	h.logger.Info("auth_proxy",
 		"req_id", payload.reqID,
 		"trace_id", payload.traceID,
@@ -759,6 +763,14 @@ func (h *Handler) filteredHeaderLogFields(payload httpLogPayload, compareResult 
 
 func (h *Handler) shouldHideSessionHeaders(payload httpLogPayload, hasDiff bool) bool {
 	return h.cfg.LogSessionOnlyOnDiff && !hasDiff && !payload.forcedShadow
+}
+
+func (h *Handler) shouldSuppressHTTPLog(payload httpLogPayload, hasDiff bool, shadowErr string) bool {
+	if !h.cfg.LogOnlyOnDiff {
+		return false
+	}
+
+	return !hasDiff && shadowErr == "" && payload.compareErr == nil
 }
 
 func filterSessionDiffs(diffs []headers.HeaderDiff) []headers.HeaderDiff {

@@ -230,6 +230,9 @@ grpc_rules: []
 # log_session_only_on_diff: log session headers only when differences exist.
 log_session_only_on_diff: true
 
+# log_only_on_diff: emit proxy result logs only for differences, shadow errors, or comparison errors.
+log_only_on_diff: false
+
 # log_json: whether the logger should output JSON.
 log_json: false
 

@@ -22,6 +22,7 @@ import (
 
 const (
 	testServiceName            = "test.Proxy"
+	testMethodUnary            = "Unary"
 	testFullMethodUnary        = "/test.Proxy/Unary"
 	testFullMethodUnaryError   = "/test.Proxy/UnaryError"
 	testFullMethodServerStream = "/test.Proxy/ServerStream"
@@ -41,6 +42,7 @@ const (
 	testServerStreamOne        = "server:one"
 	testServerStreamTwo        = "server:two"
 	testServerStreamThree      = "server:three"
+	testRemoteAddr             = "127.0.0.1:12345"
 	testShortTimeout           = 5 * time.Second
 )
 
@@ -265,7 +267,7 @@ var testServiceDesc = grpc.ServiceDesc{
 	ServiceName: testServiceName,
 	HandlerType: (*testPrimaryServiceInterface)(nil),
 	Methods: []grpc.MethodDesc{
-		{MethodName: "Unary", Handler: unaryTestHandler},
+		{MethodName: testMethodUnary, Handler: unaryTestHandler},
 		{MethodName: "UnaryError", Handler: unaryErrorTestHandler},
 	},
 	Streams: []grpc.StreamDesc{

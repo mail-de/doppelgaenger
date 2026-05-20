@@ -33,6 +33,7 @@ These settings apply across protocols unless a protocol-specific section says ot
 - `shadow_burst`: Token bucket burst capacity for shadow rate limiting.
 - `compare_headers`: List of headers compared between primary and shadow responses.
 - `log_json`: Enables structured JSON logging.
+- `log_only_on_diff`: Emits proxy result logs only for differences, shadow errors, or comparison errors.
 - `log_session_only_on_diff`: Logs session-specific headers only when a difference is detected.
 - `run_as_user`: Optional target user (name or numeric UID) after startup.
 - `run_as_group`: Optional primary group (name or numeric GID) after startup.
@@ -196,6 +197,7 @@ path_rules: []
 
 # Logging
 log_json: true
+log_only_on_diff: false
 log_session_only_on_diff: true
 
 # Observability

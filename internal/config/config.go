@@ -275,6 +275,9 @@ type Config struct {
 	// LogSessionOnlyOnDiff controls whether session headers are logged only when there are differences.
 	LogSessionOnlyOnDiff bool `mapstructure:"log_session_only_on_diff"`
 
+	// LogOnlyOnDiff controls whether proxy result logs are emitted only for differences or comparison errors.
+	LogOnlyOnDiff bool `mapstructure:"log_only_on_diff"`
+
 	// LogJSON controls whether the logger should output JSON.
 	LogJSON bool `mapstructure:"log_json"`
 
@@ -499,6 +502,7 @@ func setCompareDefaults(v *viper.Viper) {
 	v.SetDefault("compare_json_strict", false)
 	v.SetDefault("compare_html_threshold", 0.99)
 	v.SetDefault("log_session_only_on_diff", true)
+	v.SetDefault("log_only_on_diff", false)
 }
 
 func setRuntimeDefaults(v *viper.Viper) {

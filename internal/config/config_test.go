@@ -30,6 +30,7 @@ shadow_base_urls:
 shadow_selection_mode: "source_ip_hash"
 shadow_sample_percent: 20
 log_json: false
+log_only_on_diff: true
 path_mapping:
   mode: rewrite
   rules:
@@ -95,6 +96,10 @@ func assertBackendConfig(t *testing.T, loaded Config) {
 
 	if loaded.LogJSON {
 		t.Fatalf("expected log_json to be false")
+	}
+
+	if !loaded.LogOnlyOnDiff {
+		t.Fatalf("expected log_only_on_diff to be true")
 	}
 
 	if loaded.PathMapping.Mode != "rewrite" {

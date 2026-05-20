@@ -20,12 +20,28 @@ func (h *Handler) logRPCResult(
 		return
 	}
 
+	if h.shouldSuppressRPCLog(primaryResult, shadowResult, compareResult) {
+		return
+	}
+
 	attrs := grpcBaseLogAttributes(rpcCtx, fullMethod, decision)
 	attrs = append(attrs, grpcShadowDecisionLogAttributes(shadowDecision, shadowResult, decision)...)
 	attrs = append(attrs, grpcPrimaryLogAttributes(primaryTarget, primaryResult)...)
 	attrs = append(attrs, grpcShadowResultLogAttributes(shadowResult)...)
 	attrs = append(attrs, grpcCompareLogAttributes(compareResult)...)
 	h.logger.Info("grpc_proxy", attrs...)
+}
+
+func (h *Handler) shouldSuppressRPCLog(
+	primaryResult grpcStreamResult,
+	shadowResult grpcStreamResult,
+	compareResult grpcCompareResult,
+) bool {
+	if !h.cfg.LogOnlyOnDiff {
+		return false
+	}
+
+	return !compareResult.Diff && compareResult.Err == "" && primaryResult.Err == "" && shadowResult.Err == ""
 }
 
 func grpcBaseLogAttributes(rpcCtx *grpcRPCContext, fullMethod string, decision Decision) []any {
