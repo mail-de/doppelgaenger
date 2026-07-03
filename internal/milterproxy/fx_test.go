@@ -11,6 +11,7 @@ import (
 
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 	"doppelgaenger/internal/milterproxy"
 	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/ratelimit"
@@ -42,6 +43,7 @@ func TestMilterProxyFxWiring(t *testing.T) {
 			protocol.Runner{},
 		),
 		fx.Provide(
+			health.New,
 			func() protocol.Adapter { return stubAdapter{} },
 			func() ratelimit.Limiter { return stubLimiter{} },
 			milterproxy.NewHandler,

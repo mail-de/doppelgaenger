@@ -29,6 +29,7 @@ type Handler struct {
 	shadowLimiter ratelimit.Limiter
 	observability *observability.Observability
 	callOptions   []grpc.CallOption
+	primaryBearer BearerTokenSource
 	requestID     atomic.Uint64
 	randMu        sync.Mutex
 	rng           *rand.Rand
@@ -51,6 +52,7 @@ func NewHandler(
 		shadowLimiter: shadowLimiter,
 		observability: obs,
 		callOptions:   defaultCallOptions(cfg),
+		primaryBearer: newBearerTokenSource(cfg, logger),
 		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -77,10 +79,15 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 		return missingPrimaryTargetError(rpcCtx)
 	}
 
+	primaryMetadata, err := h.primaryMetadata(wrappedStream.Context(), decision)
+	if err != nil {
+		return h.primaryMetadataError(rpcCtx, err)
+	}
+
 	shadowDecision, shadow := h.prepareShadow(wrappedStream.Context(), fullMethod, decision, rpcCtx)
 	primaryCtx, primarySpan := h.startBackendSpan(wrappedStream.Context(), "primary", fullMethod, target)
 
-	upstreamCtx, cancel := context.WithCancel(outgoingContext(primaryCtx, decision.PrimaryMetadata, h.observability))
+	upstreamCtx, cancel := context.WithCancel(outgoingContext(primaryCtx, primaryMetadata, h.observability))
 	defer cancel()
 
 	primary, err := target.Conn.NewStream(upstreamCtx, genericStreamDesc(), fullMethod, h.callOptions...)
@@ -100,6 +107,39 @@ func (h *Handler) prepareRPCContext(stream grpc.ServerStream, fullMethod string)
 	rpcCtx.traceID = traceID
 
 	return rpcCtx, requestCtx, finishObservation
+}
+
+func (h *Handler) primaryMetadata(ctx context.Context, decision Decision) (map[string]string, error) {
+	metadataOverlay := cloneStringMap(decision.PrimaryMetadata)
+	if h == nil || h.primaryBearer == nil {
+		return metadataOverlay, nil
+	}
+
+	authorization, err := h.primaryBearer.Authorization(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if metadataOverlay == nil {
+		metadataOverlay = map[string]string{}
+	}
+
+	metadataOverlay[bearerAuthHeader] = authorization
+
+	return metadataOverlay, nil
+}
+
+func (h *Handler) primaryMetadataError(rpcCtx *grpcRPCContext, err error) error {
+	result := status.Error(codes.Unavailable, "primary bearer token unavailable")
+	rpcCtx.outcome = observability.OutcomeError
+	rpcCtx.spanErr = err
+	rpcCtx.primaryStatus = codes.Unavailable
+
+	if h != nil && h.logger != nil {
+		h.logger.Warn("primary bearer token unavailable", "error", err)
+	}
+
+	return result
 }
 
 func (h *Handler) resolveDecision(fullMethod string, rpcCtx *grpcRPCContext) (Decision, error) {

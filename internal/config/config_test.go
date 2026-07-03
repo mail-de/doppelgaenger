@@ -601,6 +601,117 @@ primary_grpc_targets:
 	}
 }
 
+func TestLoadGRPCBackendOIDCAuthConfig(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_backend_oidc_auth:
+  enabled: true
+  configuration_uri: " https://login.example.com/.well-known/openid-configuration "
+  token_endpoint: " https://127.0.0.1:9443/oidc/token "
+  client_id: " service-client "
+  client_secret_env: " OIDC_CLIENT_SECRET "
+  auth_method: " client_secret_post "
+  scopes:
+    - " nauthilus:authenticate "
+    - ""
+    - "nauthilus:list_accounts"
+  timeout: 2s
+  refresh_skew: 10s
+`))
+
+	if !loaded.GRPCBackendOIDCAuth.Enabled {
+		t.Fatalf("expected grpc backend OIDC auth to be enabled")
+	}
+
+	if loaded.GRPCBackendOIDCAuth.ConfigurationURI != "https://login.example.com/.well-known/openid-configuration" {
+		t.Fatalf("expected trimmed configuration URI, got %q", loaded.GRPCBackendOIDCAuth.ConfigurationURI)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.TokenEndpoint != "https://127.0.0.1:9443/oidc/token" {
+		t.Fatalf("expected trimmed token endpoint, got %q", loaded.GRPCBackendOIDCAuth.TokenEndpoint)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.ClientID != "service-client" {
+		t.Fatalf("expected trimmed client id, got %q", loaded.GRPCBackendOIDCAuth.ClientID)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.ClientSecretEnv != "OIDC_CLIENT_SECRET" {
+		t.Fatalf("expected trimmed client secret env, got %q", loaded.GRPCBackendOIDCAuth.ClientSecretEnv)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.AuthMethod != "client_secret_post" {
+		t.Fatalf("expected explicit client_secret_post, got %q", loaded.GRPCBackendOIDCAuth.AuthMethod)
+	}
+
+	expectedScopes := []string{"nauthilus:authenticate", "nauthilus:list_accounts"}
+	if !slices.Equal(loaded.GRPCBackendOIDCAuth.Scopes, expectedScopes) {
+		t.Fatalf("expected scopes %#v, got %#v", expectedScopes, loaded.GRPCBackendOIDCAuth.Scopes)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.Timeout != 2*time.Second {
+		t.Fatalf("expected backend OIDC timeout 2s, got %s", loaded.GRPCBackendOIDCAuth.Timeout)
+	}
+
+	if loaded.GRPCBackendOIDCAuth.RefreshSkew != 10*time.Second {
+		t.Fatalf("expected backend OIDC refresh skew 10s, got %s", loaded.GRPCBackendOIDCAuth.RefreshSkew)
+	}
+}
+
+func TestLoadGRPCBackendOIDCAuthRejectsPrimaryAuthorizationMetadata(t *testing.T) {
+	expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_backend_oidc_auth:
+  enabled: true
+  configuration_uri: "https://login.example.com/.well-known/openid-configuration"
+  client_id: "service-client"
+  client_secret_env: "OIDC_CLIENT_SECRET"
+grpc_rules:
+  - service: "*"
+    primary_metadata:
+      Authorization: "Basic primary-token"
+`), "expected static primary authorization metadata to conflict with grpc backend OIDC auth")
+}
+
+func TestLoadGRPCBackendOIDCAuthRejectsInvalidSecretSources(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "missing secret source",
+			yaml: "",
+		},
+		{
+			name: "both secret sources",
+			yaml: `
+  client_secret: "inline"
+  client_secret_env: "OIDC_CLIENT_SECRET"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectLoadFailure(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary.example.com:9443"
+grpc_backend_oidc_auth:
+  enabled: true
+  configuration_uri: "https://login.example.com/.well-known/openid-configuration"
+  client_id: "service-client"
+`+tt.yaml), "expected invalid backend OIDC secret source config to fail")
+		})
+	}
+}
+
 func TestLoadGRPCNormalizesMetadataKeys(t *testing.T) {
 	loaded := loadTestConfig(t, []byte(`
 protocol: grpc

@@ -14,6 +14,7 @@ import (
 
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 )
 
 // Server owns the gRPC listener lifecycle.
@@ -46,12 +47,15 @@ func RegisterHooks(
 	logger *slog.Logger,
 	version app.Version,
 	shutdowner fx.Shutdowner,
+	healthState *health.State,
 ) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
-			return startServer(cfg, srv, logger, version, shutdowner)
+			return startServer(cfg, srv, logger, version, shutdowner, healthState)
 		},
 		OnStop: func(ctx context.Context) error {
+			healthState.MarkShuttingDown()
+
 			return stopServer(ctx, srv)
 		},
 	})
@@ -63,6 +67,7 @@ func startServer(
 	logger *slog.Logger,
 	version app.Version,
 	shutdowner fx.Shutdowner,
+	healthState *health.State,
 ) error {
 	if cfg.Protocol != ProtocolName {
 		return nil
@@ -96,7 +101,9 @@ func startServer(
 	srv.grpcServer = grpcServer
 	srv.mu.Unlock()
 
-	go serveGRPCAsync(grpcServer, listener, logger, shutdowner)
+	healthState.MarkReady()
+
+	go serveGRPCAsync(grpcServer, listener, logger, shutdowner, healthState)
 
 	return nil
 }
@@ -220,12 +227,19 @@ func inboundCredentials(cfg config.GRPCTLSConfig) (credentials.TransportCredenti
 	return credentials.NewTLS(tlsConfig), nil
 }
 
-func serveGRPCAsync(grpcServer *grpc.Server, listener net.Listener, logger *slog.Logger, shutdowner fx.Shutdowner) {
+func serveGRPCAsync(
+	grpcServer *grpc.Server,
+	listener net.Listener,
+	logger *slog.Logger,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) {
 	err := grpcServer.Serve(listener)
 	if err == nil || errors.Is(err, grpc.ErrServerStopped) || errors.Is(err, net.ErrClosed) {
 		return
 	}
 
+	healthState.MarkNotReady()
 	logger.Error("grpcproxy failed", "err", err)
 
 	_ = shutdowner.Shutdown()

@@ -12,6 +12,7 @@ import (
 
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 )
 
 const protocolMilter = "milter"
@@ -36,18 +37,35 @@ func NewServer(cfg config.Config, handler *Handler, logger *slog.Logger) *Server
 }
 
 // RegisterHooks wires Milter server startup and shutdown into the lifecycle.
-func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) {
+func RegisterHooks(
+	lc fx.Lifecycle,
+	cfg config.Config,
+	srv *Server,
+	logger *slog.Logger,
+	version app.Version,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
-			return startMilterServer(cfg, srv, logger, version, shutdowner)
+			return startMilterServer(cfg, srv, logger, version, shutdowner, healthState)
 		},
 		OnStop: func(_ context.Context) error {
+			healthState.MarkShuttingDown()
+
 			return stopMilterServer(srv)
 		},
 	})
 }
 
-func startMilterServer(cfg config.Config, srv *Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) error {
+func startMilterServer(
+	cfg config.Config,
+	srv *Server,
+	logger *slog.Logger,
+	version app.Version,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) error {
 	if cfg.Protocol != protocolMilter {
 		return nil
 	}
@@ -65,7 +83,9 @@ func startMilterServer(cfg config.Config, srv *Server, logger *slog.Logger, vers
 		return err
 	}
 
-	go serveMilterAsync(srv, listener, logger, shutdowner)
+	healthState.MarkReady()
+
+	go serveMilterAsync(srv, listener, logger, shutdowner, healthState)
 
 	return nil
 }
@@ -95,8 +115,15 @@ func startMilterListener(srv *Server, logger *slog.Logger, version app.Version, 
 	return listener, nil
 }
 
-func serveMilterAsync(srv *Server, _ net.Listener, logger *slog.Logger, shutdowner fx.Shutdowner) {
+func serveMilterAsync(
+	srv *Server,
+	_ net.Listener,
+	logger *slog.Logger,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) {
 	if err := srv.serve(); err != nil && !errors.Is(err, net.ErrClosed) {
+		healthState.MarkNotReady()
 		logger.Error("milterproxy failed", "err", err)
 
 		_ = shutdowner.Shutdown()

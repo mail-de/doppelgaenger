@@ -29,6 +29,7 @@ const (
 	testFullMethodClientStream = "/test.Proxy/ClientStream"
 	testFullMethodBidiStream   = "/test.Proxy/BidiStream"
 	testMetadataAuthorization  = "authorization"
+	testMetadataRoute          = "x-route"
 	testMetadataTraceparent    = "traceparent"
 	testMetadataCustom         = "x-custom"
 	testPrimaryTargetName      = "primary"
@@ -37,6 +38,8 @@ const (
 	testPrimaryHeaderValue     = "seen"
 	testPrimaryTrailerValue    = "done"
 	testAuthorizationValue     = "Bearer primary"
+	testStaticAuthorization    = "Basic static"
+	testDynamicAuthorization   = "Bearer dynamic"
 	testTraceparentValue       = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
 	testCustomValue            = "custom-value"
 	testServerStreamOne        = "server:one"
@@ -135,6 +138,45 @@ func TestOutgoingMetadataPreservesSelectedKeys(t *testing.T) {
 	assertIncomingMetadata(t, service.lastMetadata())
 }
 
+func TestPrimaryMetadataAddsBearerWithoutMutatingDecision(t *testing.T) {
+	decision := Decision{
+		PrimaryMetadata: map[string]string{
+			testMetadataRoute:         testPrimaryTargetName,
+			testMetadataAuthorization: testStaticAuthorization,
+		},
+	}
+	handler := &Handler{
+		primaryBearer: staticBearerTokenSource{authorization: testDynamicAuthorization},
+	}
+
+	metadataOverlay, err := handler.primaryMetadata(context.Background(), decision)
+	if err != nil {
+		t.Fatalf("expected primary metadata to succeed, got %v", err)
+	}
+
+	if metadataOverlay[testMetadataAuthorization] != testDynamicAuthorization {
+		t.Fatalf("expected dynamic bearer authorization, got %#v", metadataOverlay)
+	}
+
+	if metadataOverlay[testMetadataRoute] != testPrimaryTargetName {
+		t.Fatalf("expected existing primary metadata to be preserved, got %#v", metadataOverlay)
+	}
+
+	if decision.PrimaryMetadata[testMetadataAuthorization] != testStaticAuthorization {
+		t.Fatalf("expected decision primary metadata not to be mutated, got %#v", decision.PrimaryMetadata)
+	}
+}
+
+func TestPrimaryMetadataReturnsTokenSourceError(t *testing.T) {
+	expectedErr := errors.New("token endpoint unavailable")
+	handler := &Handler{primaryBearer: staticBearerTokenSource{err: expectedErr}}
+
+	_, err := handler.primaryMetadata(context.Background(), Decision{})
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected token source error, got %v", err)
+	}
+}
+
 type testPrimaryService struct {
 	mu                   sync.Mutex
 	metadataSeen         []metadata.MD
@@ -148,6 +190,19 @@ type testPrimaryService struct {
 	headerValue          string
 	trailerValue         string
 	unaryErr             error
+}
+
+type staticBearerTokenSource struct {
+	authorization string
+	err           error
+}
+
+func (s staticBearerTokenSource) Authorization(context.Context) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+
+	return s.authorization, nil
 }
 
 func newTestPrimaryService() *testPrimaryService {

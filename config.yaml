@@ -72,6 +72,24 @@ primary_grpc_targets: []
 # Applies to: gRPC protocol.
 primary_grpc_selection_mode: "round_robin"
 
+# grpc_backend_oidc_auth: optional client-credentials Bearer token source for
+# primary gRPC upstream calls. Configure either configuration_uri or
+# token_endpoint, client_id, and exactly one of client_secret or client_secret_env.
+# Static grpc_rules primary_metadata.authorization cannot be combined with this.
+# Applies to: gRPC protocol.
+grpc_backend_oidc_auth:
+  enabled: false
+  # configuration_uri: "https://login.example.net/.well-known/openid-configuration"
+  # token_endpoint: "https://login.example.net/oauth2/token"
+  # client_id: "doppelgaenger-primary"
+  # client_secret_env: "DOPPELGAENGER_GRPC_CLIENT_SECRET"
+  # client_secret: "inline-secret"
+  auth_method: "auto"
+  scopes: []
+  timeout: "5s"
+  refresh_skew: "30s"
+  insecure_tls: false
+
 # shadow_grpc_targets: list of shadow gRPC backends.
 # Applies to: gRPC protocol.
 shadow_grpc_targets: []

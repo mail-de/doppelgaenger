@@ -73,6 +73,7 @@ These settings apply across protocols unless a protocol-specific section says ot
 - `grpc_listen_addr`: TCP address for the gRPC proxy listener. Plaintext gRPC uses HTTP/2 prior knowledge when `grpc_tls.enabled` is false.
 - `grpc_tls`: Inbound listener TLS/mTLS (`enabled`, `cert`, `key`, `client_ca`, `require_client_cert`, `min_tls_version`). `client_ca` plus `require_client_cert` enables client certificate verification.
 - `primary_grpc_targets` / `shadow_grpc_targets`: Upstream gRPC target pools. Each target has `name`, `address`, optional `authority`, and `tls` settings (`enabled`, `root_ca`, `server_name`, `client_cert`, `client_key`, `insecure_skip_verify`).
+- `grpc_backend_oidc_auth`: Optional client-credentials Bearer token injection for primary gRPC upstream calls. Configure either `configuration_uri` or `token_endpoint`, `client_id`, and exactly one of `client_secret` or `client_secret_env`.
 - `primary_grpc_selection_mode` / `shadow_grpc_selection_mode`: Target selection strategy (`round_robin` or `source_ip_hash`).
 - `grpc_shadow_timeout`: Best-effort lifetime for shadow gRPC streams only. The primary stream is not constrained by this timeout.
 - `grpc_shadow_force_metadata`: Incoming metadata key that forces shadowing when present and non-empty, unless the matched rule says `shadow: never`.
@@ -85,6 +86,7 @@ These settings apply across protocols unless a protocol-specific section says ot
 #### Observability Settings
 - `observability.prometheus_enabled`: Starts the dedicated OpenMetrics/Prometheus scrape endpoint.
 - `observability.prometheus_address` / `observability.prometheus_port` / `observability.prometheus_path`: Bind settings for the scrape endpoint.
+- `/healthz`: When the Prometheus server is enabled and its metrics path is not `/healthz`, this readiness endpoint is served on the same address without Prometheus Basic Auth.
 - `observability.prometheus_runtime_metrics`: Adds Go runtime and process collectors.
 - `observability.prometheus_http_auth_basic`: Optional `user:password` Basic Auth for the scrape endpoint.
 - `observability.prometheus_tls`: Optional server-side TLS for the scrape endpoint (`enabled`, `cert`, `key`, `min_tls_version`).
@@ -286,6 +288,18 @@ grpc_compare_metadata:
   - "grpc-status"
   - "grpc-message"
 
+grpc_backend_oidc_auth:
+  enabled: true
+  configuration_uri: "https://login.example.net/.well-known/openid-configuration"
+  # token_endpoint: "https://login.example.net/oauth2/token"
+  client_id: "doppelgaenger-primary"
+  client_secret_env: "DOPPELGAENGER_GRPC_CLIENT_SECRET"
+  auth_method: auto
+  scopes:
+    - "nauthilus:authenticate"
+  timeout: 5s
+  refresh_skew: 30s
+
 grpc_rules:
   - name: auth-shadow
     service: "nauthilus.auth.v1.AuthService"
@@ -309,6 +323,8 @@ grpc_rules:
 ```
 
 gRPC targets are not configured with HTTP URLs. Use `address` for the gRPC authority endpoint and `tls` for transport security. Metadata overlays are gRPC metadata, not HTTP headers; binary metadata (`*-bin`) and transport-controlled keys such as `grpc-*`, `content-type`, `te`, and pseudo-headers are rejected.
+
+When `grpc_backend_oidc_auth.enabled` is true, Doppelgaenger obtains a client-credentials access token and adds `authorization: Bearer ...` to primary gRPC upstream calls. Do not also configure `primary_metadata.authorization` in `grpc_rules`; static primary authorization metadata conflicts with the dynamic token source. `auth_method: auto` currently resolves to `client_secret_basic` when a client secret source is configured, or set `client_secret_post` explicitly when the token endpoint requires form credentials.
 
 #### HTTP Path Rules
 
@@ -496,6 +512,8 @@ observability:
   prometheus_path: "/metrics"
   prometheus_http_auth_basic: "metrics:secret"
 ```
+
+When the Prometheus server is enabled, `/healthz` reports local proxy readiness on the same listener unless `prometheus_path` itself is `/healthz`. The health endpoint returns `200` only after the configured HTTP, gRPC, or Milter listener has started and returns `503` while starting, failing, or shutting down; Prometheus Basic Auth does not protect `/healthz`.
 
 OpenTelemetry uses OTLP over HTTP:
 

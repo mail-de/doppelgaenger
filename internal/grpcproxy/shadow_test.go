@@ -169,7 +169,7 @@ func TestMetadataOverlaysAreBackendSpecificAndImmutable(t *testing.T) {
 	primaryService := newTestPrimaryService()
 	shadowService := newTestPrimaryService()
 	primaryOverlay := map[string]string{
-		testOverlayBackendKey: "primary",
+		testOverlayBackendKey: testPrimaryTargetName,
 		"X-Primary-Only":      testOverlayYesValue,
 	}
 	shadowOverlay := map[string]string{

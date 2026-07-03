@@ -31,13 +31,16 @@ const (
 	compareModeJSON   = "json"
 	compareModeHTML   = "html"
 
-	grpcCompareModeStatus         = "status"
-	grpcCompareModeStatusMetadata = "status_metadata"
-	grpcCompareModeMessageCount   = "message_count"
-	grpcCompareModeMessageHash    = "message_hash"
-	grpcMetadataStatus            = "grpc-status"
-	grpcMetadataMessage           = "grpc-message"
-	tlsMinVersionDefault          = "1.2"
+	grpcCompareModeStatus               = "status"
+	grpcCompareModeStatusMetadata       = "status_metadata"
+	grpcCompareModeMessageCount         = "message_count"
+	grpcCompareModeMessageHash          = "message_hash"
+	grpcMetadataStatus                  = "grpc-status"
+	grpcMetadataMessage                 = "grpc-message"
+	grpcOIDCAuthMethodAuto              = "auto"
+	grpcOIDCAuthMethodClientSecretPost  = "client_secret_post"
+	grpcOIDCAuthMethodClientSecretBasic = "client_secret_basic"
+	tlsMinVersionDefault                = "1.2"
 
 	pathRuleShadowInherit = "inherit"
 	pathRuleShadowAuto    = "auto"
@@ -212,6 +215,10 @@ type Config struct {
 	// Applies to: gRPC protocol.
 	GRPCRules []GRPCRule `mapstructure:"grpc_rules"`
 
+	// GRPCBackendOIDCAuth configures service-to-service OIDC authorization for primary gRPC upstream calls.
+	// Applies to: gRPC protocol.
+	GRPCBackendOIDCAuth GRPCBackendOIDCAuthConfig `mapstructure:"grpc_backend_oidc_auth"`
+
 	// TLSCertFile path to the HTTP listener TLS certificate file.
 	TLSCertFile string `mapstructure:"tls_cert_file"`
 
@@ -322,6 +329,21 @@ type GRPCTLSConfig struct {
 	ClientCA          string `mapstructure:"client_ca"`
 	RequireClientCert bool   `mapstructure:"require_client_cert"`
 	MinTLSVersion     string `mapstructure:"min_tls_version"`
+}
+
+// GRPCBackendOIDCAuthConfig configures client-credentials Bearer tokens for primary gRPC backend calls.
+type GRPCBackendOIDCAuthConfig struct {
+	Enabled          bool          `mapstructure:"enabled"`
+	ConfigurationURI string        `mapstructure:"configuration_uri"`
+	TokenEndpoint    string        `mapstructure:"token_endpoint"`
+	ClientID         string        `mapstructure:"client_id"`
+	ClientSecret     string        `mapstructure:"client_secret"`
+	ClientSecretEnv  string        `mapstructure:"client_secret_env"`
+	AuthMethod       string        `mapstructure:"auth_method"`
+	Scopes           []string      `mapstructure:"scopes"`
+	Timeout          time.Duration `mapstructure:"timeout"`
+	RefreshSkew      time.Duration `mapstructure:"refresh_skew"`
+	InsecureTLS      bool          `mapstructure:"insecure_tls"`
 }
 
 // GRPCTarget describes one upstream gRPC backend.
@@ -495,6 +517,11 @@ func setGRPCDefaults(v *viper.Viper) {
 	v.SetDefault("grpc_compare_mode", grpcCompareModeStatus)
 	v.SetDefault("grpc_compare_metadata", []string{grpcMetadataStatus, grpcMetadataMessage})
 	v.SetDefault("grpc_rules", []GRPCRule{})
+	v.SetDefault("grpc_backend_oidc_auth.enabled", false)
+	v.SetDefault("grpc_backend_oidc_auth.auth_method", grpcOIDCAuthMethodAuto)
+	v.SetDefault("grpc_backend_oidc_auth.timeout", 5*time.Second)
+	v.SetDefault("grpc_backend_oidc_auth.refresh_skew", 30*time.Second)
+	v.SetDefault("grpc_backend_oidc_auth.insecure_tls", false)
 }
 
 func setCompareDefaults(v *viper.Viper) {
@@ -715,7 +742,11 @@ func normalizeGRPCConfig(cfg *Config) error {
 		return err
 	}
 
-	return normalizeGRPCTargetAndRuleConfig(cfg)
+	if err := normalizeGRPCTargetAndRuleConfig(cfg); err != nil {
+		return err
+	}
+
+	return normalizeGRPCBackendOIDCAuthConfig(cfg)
 }
 
 func normalizeGRPCListenerAndTLS(cfg *Config) error {
@@ -784,6 +815,116 @@ func normalizeGRPCMetadataConfig(cfg *Config) error {
 
 	if cfg.GRPCCompareMetadata, err = normalizeGRPCMetadataKeys(cfg.GRPCCompareMetadata); err != nil {
 		return fmt.Errorf("grpc_compare_metadata: %w", err)
+	}
+
+	return nil
+}
+
+func normalizeGRPCBackendOIDCAuthConfig(cfg *Config) error {
+	token := &cfg.GRPCBackendOIDCAuth
+	normalizeGRPCBackendOIDCAuthDefaults(token)
+
+	if !token.Enabled {
+		return nil
+	}
+
+	if err := validateGRPCBackendOIDCAuthEndpoints(token); err != nil {
+		return err
+	}
+
+	if token.ClientID == "" {
+		return errors.New("grpc_backend_oidc_auth.client_id is required when grpc_backend_oidc_auth.enabled is true")
+	}
+
+	if err := validateGRPCBackendOIDCAuthSecrets(token); err != nil {
+		return err
+	}
+
+	if err := validateGRPCBackendOIDCAuthMethod(token.AuthMethod); err != nil {
+		return err
+	}
+
+	return validateGRPCBackendOIDCAuthMetadataConflict(cfg)
+}
+
+func normalizeGRPCBackendOIDCAuthDefaults(token *GRPCBackendOIDCAuthConfig) {
+	token.ConfigurationURI = strings.TrimSpace(token.ConfigurationURI)
+	token.TokenEndpoint = strings.TrimSpace(token.TokenEndpoint)
+	token.ClientID = strings.TrimSpace(token.ClientID)
+	token.ClientSecret = strings.TrimSpace(token.ClientSecret)
+	token.ClientSecretEnv = strings.TrimSpace(token.ClientSecretEnv)
+	token.AuthMethod = strings.ToLower(strings.TrimSpace(token.AuthMethod))
+
+	if token.AuthMethod == "" {
+		token.AuthMethod = grpcOIDCAuthMethodAuto
+	}
+
+	token.Scopes = normalizeStringList(token.Scopes)
+
+	if token.Timeout <= 0 {
+		token.Timeout = 5 * time.Second
+	}
+
+	if token.RefreshSkew <= 0 {
+		token.RefreshSkew = 30 * time.Second
+	}
+}
+
+func validateGRPCBackendOIDCAuthEndpoints(token *GRPCBackendOIDCAuthConfig) error {
+	if token.ConfigurationURI == "" && token.TokenEndpoint == "" {
+		return errors.New("grpc_backend_oidc_auth.configuration_uri or token_endpoint is required when grpc_backend_oidc_auth.enabled is true")
+	}
+
+	if err := validateGRPCBackendOIDCAuthURL("configuration_uri", token.ConfigurationURI); err != nil {
+		return err
+	}
+
+	return validateGRPCBackendOIDCAuthURL("token_endpoint", token.TokenEndpoint)
+}
+
+func validateGRPCBackendOIDCAuthURL(field string, value string) error {
+	if value == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("grpc_backend_oidc_auth.%s must be an absolute URL: %q", field, value)
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != protocolHTTP {
+		return fmt.Errorf("grpc_backend_oidc_auth.%s has unsupported scheme %q", field, parsed.Scheme)
+	}
+
+	return nil
+}
+
+func validateGRPCBackendOIDCAuthSecrets(token *GRPCBackendOIDCAuthConfig) error {
+	if token.ClientSecret == "" && token.ClientSecretEnv == "" {
+		return errors.New("grpc_backend_oidc_auth.client_secret or client_secret_env is required when grpc_backend_oidc_auth.enabled is true")
+	}
+
+	if token.ClientSecret != "" && token.ClientSecretEnv != "" {
+		return errors.New("grpc_backend_oidc_auth must not set both client_secret and client_secret_env")
+	}
+
+	return nil
+}
+
+func validateGRPCBackendOIDCAuthMethod(method string) error {
+	switch method {
+	case grpcOIDCAuthMethodAuto, grpcOIDCAuthMethodClientSecretPost, grpcOIDCAuthMethodClientSecretBasic:
+		return nil
+	default:
+		return fmt.Errorf("grpc_backend_oidc_auth.auth_method has unsupported value %q", method)
+	}
+}
+
+func validateGRPCBackendOIDCAuthMetadataConflict(cfg *Config) error {
+	for index, rule := range cfg.GRPCRules {
+		if _, ok := rule.PrimaryMetadata["authorization"]; ok {
+			return fmt.Errorf("grpc_rules[%d].primary_metadata.authorization conflicts with grpc_backend_oidc_auth", index)
+		}
 	}
 
 	return nil
@@ -1036,6 +1177,22 @@ func normalizeGRPCMetadataKeys(names []string) ([]string, error) {
 	}
 
 	return normalized, nil
+}
+
+func normalizeStringList(values []string) []string {
+	if values == nil {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			normalized = append(normalized, value)
+		}
+	}
+
+	return normalized
 }
 
 func normalizeGRPCOverlayMetadataMap(values map[string]string) (map[string]string, error) {

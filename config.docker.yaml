@@ -34,6 +34,21 @@ primary_grpc_targets: []
 #       # client_cert: "/certs/grpc-client.crt"
 #       # client_key: "/certs/grpc-client.key"
 primary_grpc_selection_mode: "round_robin"
+
+# grpc_backend_oidc_auth: optional client-credentials Bearer token source for
+# primary gRPC upstream calls.
+grpc_backend_oidc_auth:
+  enabled: false
+  # configuration_uri: "https://login.example.net/.well-known/openid-configuration"
+  # token_endpoint: "https://login.example.net/oauth2/token"
+  # client_id: "doppelgaenger-primary"
+  # client_secret_env: "DOPPELGAENGER_GRPC_CLIENT_SECRET"
+  auth_method: "auto"
+  scopes: []
+  timeout: "5s"
+  refresh_skew: "30s"
+  insecure_tls: false
+
 shadow_grpc_targets: []
 # Example:
 # shadow_grpc_targets:

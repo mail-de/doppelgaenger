@@ -16,6 +16,7 @@ import (
 
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 )
 
 const protocolHTTP = "http"
@@ -52,12 +53,22 @@ func NewServer(cfg config.Config, handler http.Handler) *http.Server {
 }
 
 // RegisterHooks wires the server into the Fx lifecycle.
-func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) {
+func RegisterHooks(
+	lc fx.Lifecycle,
+	cfg config.Config,
+	srv *http.Server,
+	logger *slog.Logger,
+	version app.Version,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
-			return startServer(cfg, srv, logger, version, shutdowner)
+			return startServer(cfg, srv, logger, version, shutdowner, healthState)
 		},
 		OnStop: func(ctx context.Context) error {
+			healthState.MarkShuttingDown()
+
 			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
@@ -66,7 +77,14 @@ func RegisterHooks(lc fx.Lifecycle, cfg config.Config, srv *http.Server, logger 
 	})
 }
 
-func startServer(cfg config.Config, srv *http.Server, logger *slog.Logger, version app.Version, shutdowner fx.Shutdowner) error {
+func startServer(
+	cfg config.Config,
+	srv *http.Server,
+	logger *slog.Logger,
+	version app.Version,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) error {
 	if cfg.Protocol != protocolHTTP {
 		return nil
 	}
@@ -86,7 +104,9 @@ func startServer(cfg config.Config, srv *http.Server, logger *slog.Logger, versi
 		return err
 	}
 
-	go serveHTTP(srv, listener, useTLS, cfg, logger, shutdowner)
+	healthState.MarkReady()
+
+	go serveHTTP(srv, listener, useTLS, cfg, logger, shutdowner, healthState)
 
 	return nil
 }
@@ -130,9 +150,18 @@ func resolveHTTPListener(cfg config.Config, useTLS bool, logger *slog.Logger) (n
 	return tls.NewListener(listener, tlsConfig), nil
 }
 
-func serveHTTP(srv *http.Server, listener net.Listener, useTLS bool, cfg config.Config, logger *slog.Logger, shutdowner fx.Shutdowner) {
+func serveHTTP(
+	srv *http.Server,
+	listener net.Listener,
+	useTLS bool,
+	cfg config.Config,
+	logger *slog.Logger,
+	shutdowner fx.Shutdowner,
+	healthState *health.State,
+) {
 	err := listenAndServeHTTP(srv, listener, useTLS, cfg)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		healthState.MarkNotReady()
 		logger.Error("server failed", "err", err)
 
 		_ = shutdowner.Shutdown()

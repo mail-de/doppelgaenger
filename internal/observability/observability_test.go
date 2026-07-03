@@ -16,13 +16,16 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 )
+
+const testPrometheusBasicAuth = "metrics:secret"
 
 func TestPrometheusHandlerRequiresBasicAuthAndServesOpenMetrics(t *testing.T) {
 	obs, err := New(config.Config{
 		Observability: config.ObservabilityConfig{
 			PrometheusEnabled:       true,
-			PrometheusHTTPAuthBasic: "metrics:secret",
+			PrometheusHTTPAuthBasic: testPrometheusBasicAuth,
 		},
 	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -59,6 +62,32 @@ func TestPrometheusHandlerRequiresBasicAuthAndServesOpenMetrics(t *testing.T) {
 
 	if body := w.Body.String(); !strings.Contains(body, `le="0.001"`) || !strings.Contains(body, `le="0.003"`) {
 		t.Fatalf("expected millisecond-scale duration buckets in response, got %q", body)
+	}
+}
+
+func TestHealthHandlerBypassesPrometheusBasicAuth(t *testing.T) {
+	state := health.New(config.Config{Protocol: "grpc"})
+	state.MarkReady()
+
+	obs, err := New(config.Config{
+		Observability: config.ObservabilityConfig{
+			PrometheusEnabled:       true,
+			PrometheusHTTPAuthBasic: testPrometheusBasicAuth,
+		},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("new observability: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	obs.prometheusMux(state).ServeHTTP(w, httptest.NewRequest(http.MethodGet, health.Path, nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	if body := w.Body.String(); !strings.Contains(body, `"status":"ok"`) || !strings.Contains(body, `"protocol":"grpc"`) {
+		t.Fatalf("expected minimal health response, got %q", body)
 	}
 }
 

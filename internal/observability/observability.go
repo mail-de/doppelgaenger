@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/health"
 )
 
 const (
@@ -195,12 +196,14 @@ func New(cfg config.Config, serviceVersion string, logger *slog.Logger) (*Observ
 }
 
 // RegisterHooks wires optional endpoint startup and provider shutdown into Fx.
-func RegisterHooks(lc fx.Lifecycle, obs *Observability) {
+func RegisterHooks(lc fx.Lifecycle, obs *Observability, healthState *health.State) {
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
-			return obs.StartPrometheusServer()
+			return obs.StartPrometheusServer(healthState)
 		},
 		OnStop: func(ctx context.Context) error {
+			healthState.MarkShuttingDown()
+
 			shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
@@ -474,7 +477,7 @@ func newDurationVec(name, help string, labels ...string) *prometheus.HistogramVe
 }
 
 // StartPrometheusServer starts the optional Prometheus/OpenMetrics endpoint.
-func (o *Observability) StartPrometheusServer() error {
+func (o *Observability) StartPrometheusServer(healthState *health.State) error {
 	if o == nil || !o.PrometheusEnabled() {
 		return nil
 	}
@@ -497,12 +500,9 @@ func (o *Observability) StartPrometheusServer() error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle(o.PrometheusPath(), o.PrometheusHandler())
-
 	server := &http.Server{
 		Addr:              address,
-		Handler:           mux,
+		Handler:           o.prometheusMux(healthState),
 		ReadHeaderTimeout: 5 * time.Second,
 		TLSConfig:         tlsConfig,
 	}
@@ -531,6 +531,17 @@ func (o *Observability) StartPrometheusServer() error {
 	)
 
 	return nil
+}
+
+func (o *Observability) prometheusMux(healthState *health.State) http.Handler {
+	mux := http.NewServeMux()
+	if healthState != nil && o.PrometheusPath() != health.Path {
+		mux.HandleFunc(health.Path, healthState.Handler)
+	}
+
+	mux.Handle(o.PrometheusPath(), o.PrometheusHandler())
+
+	return mux
 }
 
 // PrometheusEnabled reports whether the metrics endpoint should be started.

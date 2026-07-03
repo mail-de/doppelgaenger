@@ -37,11 +37,11 @@ func TestCompareStatusMetadataDetectsTrailerDiff(t *testing.T) {
 
 func TestCompareStatusMetadataDetectsHeaderDiff(t *testing.T) {
 	primary := completedStreamResult(codes.OK)
-	primary.Header = metadata.Pairs("x-route", "primary")
+	primary.Header = metadata.Pairs(testMetadataRoute, testPrimaryTargetName)
 	shadow := completedStreamResult(codes.OK)
-	shadow.Header = metadata.Pairs("x-route", "shadow")
+	shadow.Header = metadata.Pairs(testMetadataRoute, "shadow")
 
-	result := compareGRPCResults(grpcCompareModeStatusMetadata, []string{"x-route"}, primary, shadow)
+	result := compareGRPCResults(grpcCompareModeStatusMetadata, []string{testMetadataRoute}, primary, shadow)
 	assertCompareOutcome(t, result, grpcCompareOutcomeDiff)
 	assertCompareDiffContains(t, result, "header_metadata:x-route")
 }

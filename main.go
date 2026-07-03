@@ -17,6 +17,7 @@ import (
 	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/grpcproxy"
+	"doppelgaenger/internal/health"
 	"doppelgaenger/internal/milterproxy"
 	"doppelgaenger/internal/observability"
 	"doppelgaenger/internal/protocol"
@@ -71,6 +72,7 @@ func newApp() *fx.App {
 		fx.Provide(
 			app.NewLogger,
 			config.Load,
+			health.New,
 			func(cfg config.Config, version app.Version, logger *slog.Logger) (*observability.Observability, error) {
 				return observability.New(cfg, string(version), logger)
 			},
