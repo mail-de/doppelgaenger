@@ -1,3 +1,4 @@
+# JetBrains IDE local state. Shared project files stay tracked explicitly.
 .idea/**/workspace.xml
 .idea/**/tasks.xml
 .idea/**/usage.statistics.xml
@@ -14,20 +15,20 @@
 .idea/**/dbnavigator.xml
 .idea/**/gradle.xml
 .idea/**/libraries
-cmake-build-*/
 .idea/**/mongoSettings.xml
-*.iws
-out/
-.idea_modules/
-atlassian-ide-plugin.xml
 .idea/replstate.xml
 .idea/sonarlint/
-com_crashlytics_export_strings.xml
-crashlytics.properties
-crashlytics-build.properties
-fabric.properties
 .idea/httpRequests
 .idea/caches/build_file_checksums.ser
+.idea_modules/
+*.iws
+atlassian-ide-plugin.xml
+
+# OS/editor noise.
+.DS_Store
+*~
+
+# Go and local build outputs.
 *.exe
 *.exe~
 *.dll
@@ -35,12 +36,22 @@ fabric.properties
 *.dylib
 *.test
 *.out
+*.prof
+coverage.*
+out/
+build/
+cmake-build-*/
 go.work
 go.work.sum
-.env
-build/
-temp/
 
+# Local environment and scratch artifacts.
+.env
+temp/
+tmp/
+outputs/
+*.log
+
+# Generated security/material reports.
 sbom.cdx.json
 
 # Vendored dependencies should be committed.
