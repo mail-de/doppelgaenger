@@ -54,6 +54,9 @@ outputs/
 # Generated security/material reports.
 sbom.cdx.json
 
+# Local TLS material mounted by docker-compose.
+certs/*.pem
+
 # Vendored dependencies should be committed.
 !vendor/
 !vendor/**
