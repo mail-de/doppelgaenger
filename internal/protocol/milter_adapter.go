@@ -170,25 +170,39 @@ func (s *milterSession) Receive() (Response, error) {
 		_ = s.conn.SetReadDeadline(time.Now().Add(s.timeout))
 	}
 
-	frame, err := readMilterFrame(s.conn)
-	if err != nil {
-		duration := time.Since(s.spanStart)
-		s.finishObservation(observability.StatusError, observability.ResultError, err)
-
-		return Response{Err: err, Selected: s.addr, Duration: duration}, err
+	requestCommand := byte(0)
+	if s.command != "" {
+		requestCommand = s.command[0]
 	}
 
-	decision := milterDecision(frame.Command)
-	duration := time.Since(s.spanStart)
-	s.finishObservation(string(decision), observability.ResultOK, nil)
+	var raw []byte
 
-	return Response{
-		Proto:    protocolMilter,
-		Decision: decision,
-		Raw:      frame.Raw,
-		Selected: s.addr,
-		Duration: duration,
-	}, nil
+	for {
+		frame, err := readMilterFrame(s.conn)
+		if err != nil {
+			duration := time.Since(s.spanStart)
+			s.finishObservation(observability.StatusError, observability.ResultError, err)
+
+			return Response{Err: err, Raw: raw, Selected: s.addr, Duration: duration}, err
+		}
+
+		raw = append(raw, frame.Raw...)
+		if !milterReplyCompletesRequest(requestCommand, frame.Command) {
+			continue
+		}
+
+		decision := milterDecision(frame.Command)
+		duration := time.Since(s.spanStart)
+		s.finishObservation(string(decision), observability.ResultOK, nil)
+
+		return Response{
+			Proto:    protocolMilter,
+			Decision: decision,
+			Raw:      raw,
+			Selected: s.addr,
+			Duration: duration,
+		}, nil
+	}
 }
 
 func (s *milterSession) Close() error {
@@ -230,5 +244,18 @@ func milterDecision(command byte) Decision {
 		return DecisionContinue
 	default:
 		return DecisionUnknown
+	}
+}
+
+func milterReplyCompletesRequest(request, reply byte) bool {
+	if request == 'O' {
+		return reply == 'O'
+	}
+
+	switch reply {
+	case 'a', 'c', 'd', 'f', 'r', 's', 't', 'y', '4':
+		return true
+	default:
+		return false
 	}
 }

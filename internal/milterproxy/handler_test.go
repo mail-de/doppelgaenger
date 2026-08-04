@@ -146,6 +146,158 @@ func TestHandleConnReturnsPrimaryBeforeShadowCompletes(t *testing.T) {
 	}
 }
 
+func TestHandleConnCompletesRspamdCompatibleEOMReplySequence(t *testing.T) {
+	backendAddr, backendDone := startRspamdCompatibleMilter(t)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for Milter proxy: %v", err)
+	}
+
+	handler := newMilterTestHandler(nil, protocol.MilterAdapter{PrimaryAddr: backendAddr}, time.Second)
+	proxyDone := make(chan struct{})
+
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			handler.HandleConn(conn)
+		}
+
+		close(proxyDone)
+	}()
+
+	client, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial Milter proxy: %v", err)
+	}
+
+	defer func() {
+		_ = client.Close()
+		_ = listener.Close()
+
+		select {
+		case <-proxyDone:
+		case <-time.After(time.Second):
+			t.Error("timed out waiting for Milter proxy shutdown")
+		}
+
+		select {
+		case <-backendDone:
+		case <-time.After(time.Second):
+			t.Error("timed out waiting for Rspamd-compatible backend shutdown")
+		}
+	}()
+
+	for _, request := range []protocol.MilterFrame{
+		{Command: 'O', Payload: testMilterOptionNegotiationPayload()},
+		{Command: 'C', Payload: []byte("smtp.example.test\x000\x00")},
+		{Command: 'H', Payload: []byte("client.example.test\x00")},
+		{Command: 'M', Payload: []byte("<sender@example.test>\x00")},
+		{Command: 'R', Payload: []byte("<recipient@example.test>\x00")},
+		{Command: 'L', Payload: []byte("Subject\x00Milter EOM regression\x00")},
+		{Command: 'N'},
+		{Command: 'B', Payload: []byte("message body\r\n")},
+	} {
+		writeMilterTestFrame(t, client, request.Command, request.Payload)
+		assertMilterTestReply(t, client, expectedMilterReply(request.Command))
+	}
+
+	writeMilterTestFrame(t, client, 'E', nil)
+	assertMilterTestReply(t, client, 'h')
+	assertMilterTestReply(t, client, 'c')
+}
+
+func startRspamdCompatibleMilter(t *testing.T) (string, <-chan struct{}) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for Rspamd-compatible Milter: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			_ = listener.Close()
+		}()
+
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		for {
+			frame, readErr := protocol.ReadFrame(conn)
+			if readErr != nil {
+				return
+			}
+
+			if frame.Command == 'E' {
+				_, _ = conn.Write(testMilterFrame('h', []byte("X-Rspamd-Test\x00passed\x00")))
+				_, _ = conn.Write(testMilterFrame('c', nil))
+
+				continue
+			}
+
+			_, _ = conn.Write(testMilterFrame(expectedMilterReply(frame.Command), testMilterReplyPayload(frame.Command)))
+		}
+	}()
+
+	return listener.Addr().String(), done
+}
+
+func expectedMilterReply(command byte) byte {
+	if command == 'O' {
+		return 'O'
+	}
+
+	return 'c'
+}
+
+func testMilterReplyPayload(command byte) []byte {
+	if command == 'O' {
+		return testMilterOptionNegotiationPayload()
+	}
+
+	return nil
+}
+
+func testMilterOptionNegotiationPayload() []byte {
+	payload := make([]byte, 12)
+	binary.BigEndian.PutUint32(payload, 6)
+
+	return payload
+}
+
+func writeMilterTestFrame(t *testing.T, conn net.Conn, command byte, payload []byte) {
+	t.Helper()
+
+	if _, err := conn.Write(testMilterFrame(command, payload)); err != nil {
+		t.Fatalf("write Milter %q frame: %v", command, err)
+	}
+}
+
+func assertMilterTestReply(t *testing.T, conn net.Conn, command byte) {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(milterTestPrimaryWait)); err != nil {
+		t.Fatalf("set Milter reply deadline: %v", err)
+	}
+
+	frame, err := protocol.ReadFrame(conn)
+	if err != nil {
+		t.Fatalf("read Milter %q reply: %v", command, err)
+	}
+
+	if frame.Command != command {
+		t.Fatalf("expected Milter reply %q, got %q", command, frame.Command)
+	}
+}
+
 func newMilterTestHandler(obs *observability.Observability, adapter protocol.Adapter, timeout time.Duration) *Handler {
 	return &Handler{
 		cfg:     config.Config{ShadowSamplePercent: 100},
