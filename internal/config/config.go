@@ -26,7 +26,6 @@ const (
 	protocolMilter = "milter"
 	protocolGRPC   = "grpc"
 
-	compareModeNginx  = "nginx"
 	compareModeHeader = "header"
 	compareModeJSON   = "json"
 	compareModeHTML   = "html"
@@ -67,21 +66,21 @@ const (
 	upstreamHTTPProtocolHTTP1 = "http1"
 	upstreamHTTPProtocolHTTP2 = "http2"
 
-	headerAuthStatus       = "Auth-Status"
-	headerAuthServer       = "Auth-Server"
-	headerAuthPort         = "Auth-Port"
-	headerAuthUser         = "Auth-User"
-	headerAuthError        = "Auth-Error"
-	headerNauthilusSession = "X-Nauthilus-Session"
-	headerLocation         = "Location"
-	headerSetCookie        = "Set-Cookie"
-	headerContentType      = "Content-Type"
-	headerCacheControl     = "Cache-Control"
-	headerPragma           = "Pragma"
-	headerExpires          = "Expires"
-	headerWWWAuthenticate  = "WWW-Authenticate"
-	headerContentEncoding  = "Content-Encoding"
-	headerVary             = "Vary"
+	headerAuthStatus      = "Auth-Status"
+	headerAuthServer      = "Auth-Server"
+	headerAuthPort        = "Auth-Port"
+	headerAuthUser        = "Auth-User"
+	headerAuthError       = "Auth-Error"
+	headerSessionID       = "X-Session-ID"
+	headerLocation        = "Location"
+	headerSetCookie       = "Set-Cookie"
+	headerContentType     = "Content-Type"
+	headerCacheControl    = "Cache-Control"
+	headerPragma          = "Pragma"
+	headerExpires         = "Expires"
+	headerWWWAuthenticate = "WWW-Authenticate"
+	headerContentEncoding = "Content-Encoding"
+	headerVary            = "Vary"
 )
 
 // Config holds all configuration settings for the proxy.
@@ -263,7 +262,7 @@ type Config struct {
 	// CompareHeaders list of headers compared between primary and shadow backends.
 	CompareHeaders []string `mapstructure:"compare_headers"`
 
-	// CompareMode selects the comparison mode (nginx, header, json, html).
+	// CompareMode selects the comparison mode (header, json, html).
 	// Applies to: HTTP protocol.
 	CompareMode string `mapstructure:"compare_mode"`
 
@@ -553,7 +552,7 @@ func setHeaderDefaults(v *viper.Viper) {
 		headerAuthError,
 		"Auth-Wait",
 		"Auth-Protocol",
-		headerNauthilusSession,
+		headerSessionID,
 		headerLocation,
 		headerSetCookie,
 		headerContentType,
@@ -570,7 +569,7 @@ func setHeaderDefaults(v *viper.Viper) {
 		headerAuthPort,
 		headerAuthUser,
 		headerAuthError,
-		headerNauthilusSession,
+		headerSessionID,
 	})
 }
 
@@ -1287,15 +1286,9 @@ func grpcShadowTargetsRequired(cfg Config) bool {
 func normalizeCompareConfig(cfg *Config) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.CompareMode))
 	switch mode {
-	case "", compareModeNginx, compareModeHeader:
-		if mode == "" {
-			mode = compareModeHeader
-		} else {
-			mode = compareModeHeader
-		}
-	case compareModeJSON, compareModeHTML:
-	case "nxinx":
+	case "", compareModeHeader:
 		mode = compareModeHeader
+	case compareModeJSON, compareModeHTML:
 	default:
 		mode = compareModeHeader
 	}
@@ -1439,12 +1432,12 @@ func normalizePathRuleCompareMode(raw string) (string, error) {
 	switch mode {
 	case "":
 		return mode, nil
-	case compareModeNginx, compareModeHeader:
+	case compareModeHeader:
 		return compareModeHeader, nil
 	case compareModeJSON, compareModeHTML:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("unsupported value %q (allowed: nginx, header, json, html)", raw)
+		return "", fmt.Errorf("unsupported value %q (allowed: header, json, html)", raw)
 	}
 }
 

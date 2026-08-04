@@ -35,25 +35,6 @@ func TestHeaderComparatorDetectsHeaderDiff(t *testing.T) {
 	}
 }
 
-func TestNginxAliasReportsHeaderMode(t *testing.T) {
-	comparator := newComparatorForTest(t, config.Config{
-		CompareMode:    ModeNginx,
-		CompareHeaders: []string{compareHeaderXTest},
-	})
-
-	primary := backend.Result{Header: http.Header{compareHeaderXTest: []string{"a"}}}
-	shadow := backend.Result{Header: http.Header{compareHeaderXTest: []string{"a"}}}
-
-	result, err := comparator.Compare(primary, shadow)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Mode != ModeHeader {
-		t.Fatalf("expected legacy nginx alias to report %q, got %q", ModeHeader, result.Mode)
-	}
-}
-
 func TestJSONComparatorStrictDetectsOrderDiff(t *testing.T) {
 	comparator := newComparatorForTest(t, config.Config{
 		CompareMode:    ModeJSON,

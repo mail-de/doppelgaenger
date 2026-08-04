@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,8 +14,6 @@ import (
 	"doppelgaenger/contrib/e2e/internal/e2etest"
 	"doppelgaenger/internal/protocol"
 )
-
-const rspamdMilterImage = "rspamd/rspamd:4.1.1"
 
 func TestMilterObservabilityE2E(t *testing.T) {
 	root := e2etest.RepoRoot(t)
@@ -64,9 +60,7 @@ func TestMilterNoShadowE2E(t *testing.T) {
 	e2etest.MustFileNotContain(t, env.shadowLog, "bWlsdGVyLW5vLXNoYWRvdw==")
 }
 
-func TestRspamdMilterReplySemanticsE2E(t *testing.T) {
-	requireLocalRspamdImage(t)
-
+func TestNoReplyMilterProfileE2E(t *testing.T) {
 	root := e2etest.RepoRoot(t)
 	runDir := t.TempDir()
 	binDir := filepath.Join(runDir, "bin")
@@ -75,116 +69,122 @@ func TestRspamdMilterReplySemanticsE2E(t *testing.T) {
 	shadowAddr := e2etest.FreeAddr(t)
 	proxyAddr := e2etest.FreeAddr(t)
 
-	startRspamdMilter(t, runDir, "primary", primaryAddr)
-	startRspamdMilter(t, runDir, "shadow", shadowAddr)
-	configPath := filepath.Join(runDir, "doppelgaenger-rspamd-milter.yaml")
-	logPath := filepath.Join(runDir, "doppelgaenger-rspamd-milter.log")
+	startNoReplyMilterBackend(t, primaryAddr)
+	startNoReplyMilterBackend(t, shadowAddr)
+	configPath := filepath.Join(runDir, "doppelgaenger-no-reply-milter.yaml")
+	logPath := filepath.Join(runDir, "doppelgaenger-no-reply-milter.log")
 	e2etest.WriteFile(t, configPath, fmt.Sprintf(`protocol: milter
 milter_listen_addr: "%s"
 primary_milter_addr: "%s"
 shadow_milter_addr: "%s"
-milter_timeout: "15s"
+milter_timeout: "2s"
 shadow_sample_percent: 100
 shadow_rps: 0
 compare_mode: "header"
 log_json: true
 `, proxyAddr, primaryAddr, shadowAddr))
 
-	doppelProcess := e2etest.Start(t, "doppelgaenger-rspamd-milter", logPath, nil, doppel, "--config", configPath)
+	doppelProcess := e2etest.Start(t, "doppelgaenger-no-reply-milter", logPath, nil, doppel, "--config", configPath)
 	defer doppelProcess.Stop(t)
 	e2etest.WaitTCP(t, proxyAddr)
 
-	runRspamdMilterTransaction(t, proxyAddr)
+	runNoReplyMilterTransaction(t, proxyAddr)
 	e2etest.WaitFileContains(t, logPath, `"command":"E"`, `"shadow_ok":true`)
 }
 
-func requireLocalRspamdImage(t *testing.T) {
+func startNoReplyMilterBackend(t *testing.T, addr string) {
 	t.Helper()
 
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("Docker is unavailable; skipping real Rspamd Milter E2E")
-	}
-
-	if output, err := exec.Command("docker", "image", "inspect", rspamdMilterImage).CombinedOutput(); err != nil {
-		t.Skipf("local %s image is unavailable; skipping real Rspamd Milter E2E: %s", rspamdMilterImage, strings.TrimSpace(string(output)))
-	}
-}
-
-func startRspamdMilter(t *testing.T, runDir, role, addr string) {
-	t.Helper()
-
-	configDir := filepath.Join(runDir, "rspamd-"+role)
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatalf("create Rspamd Milter config directory: %v", err)
-	}
-	e2etest.WriteFile(t, filepath.Join(configDir, "worker-proxy.inc"), `bind_socket = "0.0.0.0:11332";
-milter = true;
-timeout = 30s;
-upstream "local" {
-  default = true;
-  hosts = "localhost";
-}
-`)
-
-	name := fmt.Sprintf("doppelgaenger-e2e-rspamd-%s-%d", role, time.Now().UnixNano())
-	args := []string{
-		"run", "--detach", "--rm", "--name", name,
-		"--publish", addr + ":11332",
-		"--volume", configDir + ":/etc/rspamd/local.d:ro",
-		rspamdMilterImage,
-	}
-	output, err := exec.Command("docker", args...).CombinedOutput()
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		t.Fatalf("start real Rspamd Milter %s: %v\n%s", role, err, string(output))
+		t.Fatalf("listen for no-reply Milter backend: %v", err)
 	}
 
 	t.Cleanup(func() {
-		output, err := exec.Command("docker", "rm", "--force", name).CombinedOutput()
-		if err != nil {
-			t.Logf("remove real Rspamd Milter %s: %v: %s", role, err, strings.TrimSpace(string(output)))
-		}
+		_ = listener.Close()
 	})
-	e2etest.WaitTCP(t, addr)
+
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+
+			go handleNoReplyMilterBackendConnection(conn)
+		}
+	}()
 }
 
-func runRspamdMilterTransaction(t *testing.T, addr string) {
+func handleNoReplyMilterBackendConnection(conn net.Conn) {
+	defer func() { _ = conn.Close() }()
+
+	for {
+		frame, err := protocol.ReadFrame(conn)
+		if err != nil {
+			return
+		}
+
+		if frame.Command == 'E' {
+			_, _ = conn.Write(milterProfileFrame('h', []byte("X-Reference-Test\x00passed\x00")))
+			_, _ = conn.Write(milterProfileFrame('c', nil))
+
+			continue
+		}
+
+		if !protocol.MilterCommandExpectsResponse(frame.Command) {
+			continue
+		}
+
+		replyCommand := byte('c')
+		replyPayload := []byte(nil)
+		if frame.Command == 'O' {
+			replyCommand = 'O'
+			replyPayload = milterOptionNegotiationPayload()
+		}
+
+		_, _ = conn.Write(milterProfileFrame(replyCommand, replyPayload))
+	}
+}
+
+func runNoReplyMilterTransaction(t *testing.T, addr string) {
 	t.Helper()
 
 	conn, err := net.DialTimeout("tcp", addr, time.Second)
 	if err != nil {
-		t.Fatalf("dial Doppelgaenger Rspamd Milter: %v", err)
+		t.Fatalf("dial Doppelgaenger no-reply Milter profile: %v", err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	writeRspamdMilterFrame(t, conn, 'O', rspamdOptionNegotiationPayload())
-	assertRspamdMilterReply(t, conn, 'O', time.Second)
+	writeMilterProfileFrame(t, conn, 'O', milterOptionNegotiationPayload())
+	assertMilterProfileReply(t, conn, 'O', time.Second)
 
 	for _, frame := range []protocol.MilterFrame{
 		{Command: 'D', Payload: []byte("Cj\x00mail.example.test\x00")},
-		{Command: 'C', Payload: rspamdConnectPayload()},
+		{Command: 'C', Payload: milterConnectPayload()},
 		{Command: 'H', Payload: []byte("client.example.test\x00")},
 		{Command: 'M', Payload: []byte("<sender@example.test>\x00")},
 		{Command: 'R', Payload: []byte("<recipient@example.test>\x00")},
-		{Command: 'L', Payload: []byte("Subject\x00Rspamd Milter E2E\x00")},
+		{Command: 'L', Payload: []byte("Subject\x00No-reply Milter E2E\x00")},
 		{Command: 'N'},
 		{Command: 'B', Payload: []byte("message body\r\n")},
 	} {
-		writeRspamdMilterFrame(t, conn, frame.Command, frame.Payload)
-		assertRspamdMilterNoReply(t, conn, frame.Command)
+		writeMilterProfileFrame(t, conn, frame.Command, frame.Payload)
+		assertMilterProfileNoReply(t, conn, frame.Command)
 	}
 
-	writeRspamdMilterFrame(t, conn, 'E', nil)
-	assertRspamdMilterTerminalReply(t, conn)
+	writeMilterProfileFrame(t, conn, 'E', nil)
+	assertMilterProfileTerminalReply(t, conn)
 }
 
-func rspamdOptionNegotiationPayload() []byte {
+func milterOptionNegotiationPayload() []byte {
 	payload := make([]byte, 12)
 	binary.BigEndian.PutUint32(payload, 6)
 
 	return payload
 }
 
-func rspamdConnectPayload() []byte {
+func milterConnectPayload() []byte {
 	payload := append([]byte("client.example.test\x00"), '4')
 	port := make([]byte, 2)
 	binary.BigEndian.PutUint16(port, 25)
@@ -193,63 +193,68 @@ func rspamdConnectPayload() []byte {
 	return append(payload, []byte("127.0.0.1\x00")...)
 }
 
-func writeRspamdMilterFrame(t *testing.T, conn net.Conn, command byte, payload []byte) {
-	t.Helper()
-
+func milterProfileFrame(command byte, payload []byte) []byte {
 	frame := make([]byte, 5+len(payload))
 	binary.BigEndian.PutUint32(frame, uint32(1+len(payload)))
 	frame[4] = command
 	copy(frame[5:], payload)
-	if _, err := conn.Write(frame); err != nil {
-		t.Fatalf("write Rspamd Milter %q frame: %v", command, err)
+
+	return frame
+}
+
+func writeMilterProfileFrame(t *testing.T, conn net.Conn, command byte, payload []byte) {
+	t.Helper()
+
+	if _, err := conn.Write(milterProfileFrame(command, payload)); err != nil {
+		t.Fatalf("write no-reply Milter %q frame: %v", command, err)
 	}
 }
 
-func assertRspamdMilterReply(t *testing.T, conn net.Conn, expected byte, timeout time.Duration) {
+func assertMilterProfileReply(t *testing.T, conn net.Conn, expected byte, timeout time.Duration) {
 	t.Helper()
 
 	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-		t.Fatalf("set Rspamd Milter reply deadline: %v", err)
+		t.Fatalf("set no-reply Milter reply deadline: %v", err)
 	}
 
 	frame, err := protocol.ReadFrame(conn)
 	if err != nil {
-		t.Fatalf("read Rspamd Milter %q reply: %v", expected, err)
+		t.Fatalf("read no-reply Milter %q reply: %v", expected, err)
 	}
 
 	if frame.Command != expected {
-		t.Fatalf("expected Rspamd Milter reply %q, got %q", expected, frame.Command)
+		t.Fatalf("expected no-reply Milter response %q, got %q", expected, frame.Command)
 	}
 }
 
-func assertRspamdMilterNoReply(t *testing.T, conn net.Conn, command byte) {
+func assertMilterProfileNoReply(t *testing.T, conn net.Conn, command byte) {
 	t.Helper()
 
 	if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
-		t.Fatalf("set Rspamd Milter no-reply deadline: %v", err)
+		t.Fatalf("set Milter no-reply deadline: %v", err)
 	}
 
 	_, err := protocol.ReadFrame(conn)
 	if err == nil {
-		t.Fatalf("expected no Rspamd Milter reply for %q", command)
+		t.Fatalf("expected no Milter reply for %q", command)
 	}
 
 	if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
-		t.Fatalf("expected no-reply timeout for Rspamd Milter %q, got %v", command, err)
+		t.Fatalf("expected no-reply timeout for Milter %q, got %v", command, err)
 	}
 }
 
-func assertRspamdMilterTerminalReply(t *testing.T, conn net.Conn) {
+func assertMilterProfileTerminalReply(t *testing.T, conn net.Conn) {
 	t.Helper()
 
-	if err := conn.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
-		t.Fatalf("set Rspamd Milter EOM deadline: %v", err)
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set Milter EOM deadline: %v", err)
 	}
 
 	for {
 		frame, err := protocol.ReadFrame(conn)
 		if err != nil {
-			t.Fatalf("read Rspamd Milter EOM reply: %v", err)
+			t.Fatalf("read Milter EOM reply: %v", err)
 		}
 
 		switch frame.Command {

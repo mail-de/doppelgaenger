@@ -83,7 +83,7 @@ shadow_selection_mode: "round_robin"
 # shadow_sample_percent: percentage of traffic mirrored to shadow (0-100).
 shadow_sample_percent: 5
 
-# shadow_force_header: header name that (if present) forces shadowing.
+# shadow_force_header: header name whose non-empty value forces shadowing.
 shadow_force_header: "X-Shadow"
 
 # grpc_shadow_force_metadata: metadata key that forces gRPC shadowing when
@@ -98,7 +98,7 @@ primary_request_headers: {}
 # path_rules[].shadow_request_headers can override these values per matched path.
 shadow_request_headers: {}
 
-# shadow_rps: maximum requests per second for the shadow backend (0 disables).
+# shadow_rps: process-local shadow decisions per second (0 disables).
 shadow_rps: 200
 
 # shadow_burst: maximum number of tokens in the token bucket (burst capacity).
@@ -113,7 +113,8 @@ grpc_shadow_queue_size: 128
 grpc_max_receive_message_bytes: 4194304
 grpc_max_send_message_bytes: 4194304
 
-# max_backend_body_bytes: limits the size of the request body sent to backends.
+# max_backend_body_bytes: shared request/response body buffer limit. Oversized
+# requests return 413; backend response bodies are truncated to this many bytes.
 max_backend_body_bytes: 32768
 
 # upstream_http_dial_timeout: timeout for establishing upstream TCP connections.
@@ -150,7 +151,7 @@ forward_response_headers:
   - "Auth-Error"
   - "Auth-Wait"
   - "Auth-Protocol"
-  - "X-Nauthilus-Session"
+  - "X-Session-ID"
   - "Location"
   - "Set-Cookie"
   - "Content-Type"
@@ -161,17 +162,16 @@ forward_response_headers:
   - "Content-Encoding"
   - "Vary"
 
-# compare_headers: list of headers compared between primary and shadow.
+# compare_headers: list of HTTP response headers compared between primary and shadow.
 compare_headers:
   - "Auth-Status"
   - "Auth-Server"
   - "Auth-Port"
   - "Auth-User"
   - "Auth-Error"
-  - "X-Nauthilus-Session"
+  - "X-Session-ID"
 
 # compare_mode: selects the comparison mode (header, json, html).
-# The legacy value nginx is accepted as an alias for header.
 compare_mode: "header"
 
 # grpc_compare_mode: status, status_metadata, message_count, or message_hash.
@@ -225,12 +225,12 @@ grpc_rules: []
 # Example:
 # grpc_rules:
 #   - name: auth-shadow
-#     service: "nauthilus.auth.v1.AuthService"
+#     service: "example.auth.v1.AuthService"
 #     methods: ["Authenticate", "LookupIdentity", "ListAccounts"]
 #     shadow: auto
 #     compare: on
 #     compare_mode: status_metadata
-#     compare_metadata: ["grpc-status", "grpc-message", "x-nauthilus-session"]
+#     compare_metadata: ["grpc-status", "grpc-message", "x-session-id"]
 #     primary_metadata:
 #       authorization: "Basic primary-token"
 #     shadow_metadata:

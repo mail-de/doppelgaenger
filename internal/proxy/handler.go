@@ -36,7 +36,7 @@ const (
 	shadowNotStarted            = "shadow_not_started"
 	shadowSkipReasonRateLimited = "rate_limited"
 	compareSkipReasonNoShadow   = "no_shadow"
-	headerNauthilusSession      = "X-Nauthilus-Session"
+	headerSessionID             = "X-Session-ID"
 	headerLocation              = "Location"
 	headerSetCookie             = "Set-Cookie"
 )
@@ -755,8 +755,8 @@ func (h *Handler) filteredHeaderLogFields(payload httpLogPayload, compareResult 
 		return pKV, sKV, diffs, hasDiff
 	}
 
-	delete(pKV, headerNauthilusSession)
-	delete(sKV, headerNauthilusSession)
+	delete(pKV, headerSessionID)
+	delete(sKV, headerSessionID)
 
 	return pKV, sKV, filterSessionDiffs(diffs), hasDiff
 }
@@ -776,7 +776,7 @@ func (h *Handler) shouldSuppressHTTPLog(payload httpLogPayload, hasDiff bool, sh
 func filterSessionDiffs(diffs []headers.HeaderDiff) []headers.HeaderDiff {
 	filtered := make([]headers.HeaderDiff, 0, len(diffs))
 	for _, diff := range diffs {
-		if diff.Key == headerNauthilusSession {
+		if diff.Key == headerSessionID {
 			continue
 		}
 

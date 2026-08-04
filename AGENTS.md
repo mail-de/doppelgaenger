@@ -17,6 +17,9 @@ details change.
 - Add focused regression tests for bug fixes before changing production code
   when a reproducer is practical.
 - Write code comments and technical documentation in English.
+- Keep project-owned protocol behavior, defaults, examples, fixtures, tests,
+  and documentation backend-product neutral. Use repository-owned test doubles
+  for behavioral profiles instead of product-specific integrations.
 
 ## Commit Log Format
 

@@ -23,12 +23,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags "-X main.version=${VE
 # Final stage
 FROM scratch
 
+LABEL org.opencontainers.image.authors="Christian Rößner <c.roessner@team.mail.de>"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ENV TZ=UTC
 
 WORKDIR /app
 
 # Copy the binary from the builder stage
 COPY --from=builder /app/doppelgaenger .
+COPY --from=builder /app/LICENSE ./LICENSE
 COPY --from=builder /app/sbom.cdx.json .
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo/UTC /usr/share/zoneinfo/UTC

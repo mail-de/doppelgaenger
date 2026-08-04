@@ -99,7 +99,7 @@ func newAsyncTestHandler(adapter protocol.Adapter, timeout time.Duration) *Handl
 			ShadowSamplePercent:    100,
 			ShadowTimeout:          timeout,
 			ForwardResponseHeaders: []string{testAuthStatus},
-			CompareMode:            "nginx",
+			CompareMode:            "header",
 		},
 		adapter:    adapter,
 		runner:     protocol.Runner{ShadowTimeout: timeout},

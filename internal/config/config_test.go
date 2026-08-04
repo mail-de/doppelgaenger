@@ -536,25 +536,6 @@ path_rules: []
 	}
 }
 
-func TestLoadCompareModeNginxCanonicalizesToHeader(t *testing.T) {
-	loaded := loadTestConfig(t, []byte(`
-protocol: http
-compare_mode: nginx
-path_rules:
-  - name: auth
-    match: "^/auth$"
-    compare_mode: nginx
-`))
-
-	if loaded.CompareMode != compareModeHeader {
-		t.Fatalf("expected global compare_mode to canonicalize to header, got %q", loaded.CompareMode)
-	}
-
-	if got := loaded.PathRules[0].CompareMode; got != compareModeHeader {
-		t.Fatalf("expected path rule compare_mode to canonicalize to header, got %q", got)
-	}
-}
-
 func TestLoadMinimalGRPCConfig(t *testing.T) {
 	loaded := loadTestConfig(t, []byte(`
 protocol: grpc
@@ -615,9 +596,9 @@ grpc_backend_oidc_auth:
   client_secret_env: " OIDC_CLIENT_SECRET "
   auth_method: " client_secret_post "
   scopes:
-    - " nauthilus:authenticate "
+    - " example:authenticate "
     - ""
-    - "nauthilus:list_accounts"
+    - "example:list_accounts"
   timeout: 2s
   refresh_skew: 10s
 `))
@@ -646,7 +627,7 @@ grpc_backend_oidc_auth:
 		t.Fatalf("expected explicit client_secret_post, got %q", loaded.GRPCBackendOIDCAuth.AuthMethod)
 	}
 
-	expectedScopes := []string{"nauthilus:authenticate", "nauthilus:list_accounts"}
+	expectedScopes := []string{"example:authenticate", "example:list_accounts"}
 	if !slices.Equal(loaded.GRPCBackendOIDCAuth.Scopes, expectedScopes) {
 		t.Fatalf("expected scopes %#v, got %#v", expectedScopes, loaded.GRPCBackendOIDCAuth.Scopes)
 	}

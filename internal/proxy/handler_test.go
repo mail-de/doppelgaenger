@@ -15,6 +15,7 @@ import (
 
 	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/headers"
 	"doppelgaenger/internal/mapping"
 	"doppelgaenger/internal/pathrules"
 	"doppelgaenger/internal/protocol"
@@ -33,7 +34,20 @@ const (
 	testBasicShadow     = "Basic shadow-secret"
 	testMetricsRegex    = "^/metrics$"
 	testDiffOnlyRule    = "diff-only"
+	testOtherHeader     = "X-Other"
 )
+
+func TestFilterSessionDiffsRemovesGenericSessionHeader(t *testing.T) {
+	diffs := []headers.HeaderDiff{
+		{Key: headerSessionID},
+		{Key: testOtherHeader},
+	}
+
+	filtered := filterSessionDiffs(diffs)
+	if len(filtered) != 1 || filtered[0].Key != testOtherHeader {
+		t.Fatalf("expected only the non-session header diff, got %#v", filtered)
+	}
+}
 
 func TestEnsureRequestIDPreservesHeader(t *testing.T) {
 	h := &Handler{rng: rand.New(rand.NewSource(1))}
@@ -71,7 +85,7 @@ func TestEnsureRequestIDGenerates(t *testing.T) {
 func TestWritePrimaryResponsePreservesRedirectHeaders(t *testing.T) {
 	const (
 		redirectLocation = "/oidc/authorize/de"
-		redirectCookie   = "nauthilus=abc; Path=/; HttpOnly"
+		redirectCookie   = "session=abc; Path=/; HttpOnly"
 	)
 
 	gin.SetMode(gin.TestMode)

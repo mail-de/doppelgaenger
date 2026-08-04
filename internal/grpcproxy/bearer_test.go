@@ -42,7 +42,7 @@ func TestClientCredentialsTokenSourceUsesClientSecretPostAndCachesToken(t *testi
 		ClientID:         testServiceClient,
 		ClientSecret:     testServiceSecret,
 		AuthMethod:       testAuthMethodPost,
-		Scopes:           []string{"nauthilus:authenticate", "nauthilus:list_accounts"},
+		Scopes:           []string{"example:authenticate", "example:list_accounts"},
 	})
 
 	authorization, err := source.Authorization(context.Background())
@@ -97,7 +97,7 @@ func startClientSecretPostOIDCServer(t *testing.T, requests *atomic.Int64) *http
 		assertFormValue(t, r.Form, oidcGrantTypeClientCredentialsKey, oidcGrantTypeClientCredentials)
 		assertFormValue(t, r.Form, "client_id", testServiceClient)
 		assertFormValue(t, r.Form, testClientSecretFormKey, testServiceSecret)
-		assertFormValue(t, r.Form, "scope", "nauthilus:authenticate nauthilus:list_accounts")
+		assertFormValue(t, r.Form, "scope", "example:authenticate example:list_accounts")
 
 		if _, _, ok := r.BasicAuth(); ok {
 			t.Fatalf("did not expect basic auth for %s", testAuthMethodPost)

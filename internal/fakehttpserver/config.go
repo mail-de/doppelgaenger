@@ -53,7 +53,7 @@ var defaultEchoHeaders = []string{
 	"Auth-Port",
 	"Auth-User",
 	"Auth-Error",
-	"X-Nauthilus-Session",
+	"X-Session-ID",
 }
 
 // Load loads the configuration from a YAML file using Viper.

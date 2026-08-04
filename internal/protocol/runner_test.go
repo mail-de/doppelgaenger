@@ -75,7 +75,7 @@ func TestRunnerShadowSendError(t *testing.T) {
 	}
 }
 
-func TestRunnerRspamdNoReplyCommandsSkipReceiveForPrimaryAndShadow(t *testing.T) {
+func TestRunnerNoReplyCommandsSkipReceiveForPrimaryAndShadow(t *testing.T) {
 	noReplyCommands := []byte{'A', 'B', 'C', 'D', 'H', 'K', 'L', 'M', 'N', 'Q', 'R', 'T', 'U'}
 
 	for _, command := range noReplyCommands {

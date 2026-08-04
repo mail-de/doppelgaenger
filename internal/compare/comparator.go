@@ -15,8 +15,6 @@ import (
 const (
 	// ModeHeader compares configured response headers.
 	ModeHeader = "header"
-	// ModeNginx is a legacy alias for ModeHeader.
-	ModeNginx = "nginx"
 	// ModeJSON compares response bodies as JSON.
 	ModeJSON = "json"
 	// ModeHTML compares response bodies as HTML text.
@@ -112,7 +110,7 @@ func (r *Registry) Compare(mode string, compareHeaders []string, primary, shadow
 func normalizeCompareMode(raw string) string {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	switch mode {
-	case "", "nxinx", ModeNginx, ModeHeader:
+	case "", ModeHeader:
 		return ModeHeader
 	default:
 		return mode

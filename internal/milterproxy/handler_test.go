@@ -146,8 +146,8 @@ func TestHandleConnReturnsPrimaryBeforeShadowCompletes(t *testing.T) {
 	}
 }
 
-func TestHandleConnCompletesRspamdCompatibleEOMReplySequence(t *testing.T) {
-	backendAddr, backendDone := startRspamdCompatibleMilter(t)
+func TestHandleConnCompletesNoReplyProfileEOMSequence(t *testing.T) {
+	backendAddr, backendDone := startNoReplyProfileMilter(t)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -184,14 +184,14 @@ func TestHandleConnCompletesRspamdCompatibleEOMReplySequence(t *testing.T) {
 		select {
 		case <-backendDone:
 		case <-time.After(time.Second):
-			t.Error("timed out waiting for Rspamd-compatible backend shutdown")
+			t.Error("timed out waiting for no-reply backend shutdown")
 		}
 	}()
 
-	runRspamdCompatibleMilterTransaction(t, client)
+	runNoReplyProfileMilterTransaction(t, client)
 }
 
-func runRspamdCompatibleMilterTransaction(t *testing.T, client net.Conn) {
+func runNoReplyProfileMilterTransaction(t *testing.T, client net.Conn) {
 	t.Helper()
 
 	for _, request := range []protocol.MilterFrame{
@@ -221,12 +221,12 @@ func runRspamdCompatibleMilterTransaction(t *testing.T, client net.Conn) {
 	assertMilterTestReply(t, client, 'c')
 }
 
-func startRspamdCompatibleMilter(t *testing.T) (string, <-chan struct{}) {
+func startNoReplyProfileMilter(t *testing.T) (string, <-chan struct{}) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("listen for Rspamd-compatible Milter: %v", err)
+		t.Fatalf("listen for no-reply Milter profile: %v", err)
 	}
 
 	done := make(chan struct{})
@@ -251,7 +251,7 @@ func startRspamdCompatibleMilter(t *testing.T) (string, <-chan struct{}) {
 			}
 
 			if frame.Command == 'E' {
-				_, _ = conn.Write(testMilterFrame('h', []byte("X-Rspamd-Test\x00passed\x00")))
+				_, _ = conn.Write(testMilterFrame('h', []byte("X-Reference-Test\x00passed\x00")))
 				_, _ = conn.Write(testMilterFrame('c', nil))
 
 				continue

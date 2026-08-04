@@ -73,7 +73,7 @@ primary_grpc_targets: []
 primary_grpc_selection_mode: "round_robin"
 
 # grpc_backend_oidc_auth: optional client-credentials Bearer token source for
-# primary gRPC upstream calls. Configure either configuration_uri or
+# primary gRPC upstream calls. Configure at least one of configuration_uri or
 # token_endpoint, client_id, and exactly one of client_secret or client_secret_env.
 # Static grpc_rules primary_metadata.authorization cannot be combined with this.
 # Applies to: gRPC protocol.
@@ -155,7 +155,7 @@ insecure_upstream: false
 # Applies to: All protocols.
 shadow_sample_percent: 5
 
-# shadow_force_header: header name that (if present) forces shadowing.
+# shadow_force_header: header name whose non-empty value forces shadowing.
 # Applies to: HTTP protocol.
 shadow_force_header: "X-Shadow"
 
@@ -174,8 +174,8 @@ primary_request_headers: {}
 # Applies to: HTTP protocol.
 shadow_request_headers: {}
 
-# shadow_rps: maximum requests per second for the shadow backend (0 disables).
-# Applies to: All protocols.
+# shadow_rps: process-local shadow decisions per second (0 disables).
+# Applies per HTTP request, gRPC RPC, or Milter client connection.
 shadow_rps: 200
 
 # shadow_burst: maximum number of tokens in the token bucket (burst capacity).
@@ -202,7 +202,8 @@ grpc_shadow_queue_size: 128
 grpc_max_receive_message_bytes: 4194304
 grpc_max_send_message_bytes: 4194304
 
-# max_backend_body_bytes: limits the size of the request body sent to backends.
+# max_backend_body_bytes: shared request/response body buffer limit. Oversized
+# requests return 413; backend response bodies are truncated to this many bytes.
 # Applies to: HTTP protocol.
 max_backend_body_bytes: 32768
 
@@ -248,7 +249,7 @@ forward_response_headers:
   - "Auth-Error"
   - "Auth-Wait"
   - "Auth-Protocol"
-  - "X-Nauthilus-Session"
+  - "X-Session-ID"
   - "Location"
   - "Set-Cookie"
   - "Content-Type"
@@ -259,18 +260,17 @@ forward_response_headers:
   - "Content-Encoding"
   - "Vary"
 
-# compare_headers: list of headers compared between primary and shadow.
-# Applies to: All protocols (if applicable).
+# compare_headers: list of HTTP response headers compared between primary and shadow.
+# Applies to: HTTP protocol.
 compare_headers:
   - "Auth-Status"
   - "Auth-Server"
   - "Auth-Port"
   - "Auth-User"
   - "Auth-Error"
-  - "X-Nauthilus-Session"
+  - "X-Session-ID"
 
 # compare_mode: selects the comparison mode (header, json, html).
-# The legacy value nginx is accepted as an alias for header.
 # Applies to: HTTP protocol.
 compare_mode: "header"
 
@@ -339,7 +339,7 @@ grpc_rules: []
 # Example: shadow selected auth RPCs and keep everything else primary-only.
 # grpc_rules:
 #   - name: auth-shadow
-#     service: "nauthilus.auth.v1.AuthService"
+#     service: "example.auth.v1.AuthService"
 #     methods: ["Authenticate", "LookupIdentity", "ListAccounts"]
 #     shadow: auto
 #     compare: on
@@ -347,7 +347,7 @@ grpc_rules: []
 #     compare_metadata:
 #       - "grpc-status"
 #       - "grpc-message"
-#       - "x-nauthilus-session"
+#       - "x-session-id"
 #     primary_metadata:
 #       authorization: "Basic primary-token"
 #     shadow_metadata:
@@ -358,10 +358,20 @@ grpc_rules: []
 #     shadow: never
 #     compare: off
 
+# Runtime Isolation Settings
+# ------------------------------------------------------------------------------
+# These Unix-only controls require the corresponding process privileges.
+# chroot is applied before supplementary groups, GID, and UID. When run_as_user
+# is set, the current implementation changes UID and supplementary groups but
+# leaves the primary GID unchanged and does not apply run_as_group.
+run_as_user: ""
+run_as_group: ""
+chroot: ""
+
 # Logging Settings
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
-# Applies to: All protocols.
+# Applies to: HTTP protocol.
 log_session_only_on_diff: true
 
 # log_only_on_diff: emit proxy result logs only for differences, shadow errors, or comparison errors.

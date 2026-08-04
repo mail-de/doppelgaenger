@@ -16,6 +16,9 @@ These rules are mandatory for coding changes in this repository.
 - MUST: Add focused regression coverage for bug fixes when a reproducer is
   practical.
 - MUST: Write code comments and technical documentation in English.
+- MUST: Keep project-owned protocol behavior, defaults, examples, fixtures,
+  tests, and documentation backend-product neutral. Prove behavioral profiles
+  with repository-owned test doubles instead of product-specific integrations.
 - MUST: Write commit messages as `Prefix: Concise headline`, using only the
   approved prefixes `Add`, `Change`, `Fix`, `Remove`, `Refactor`, `Test`,
   `Docs`, `Build`, `Ci`, `Vendor`, `Security`, and `Chore`.

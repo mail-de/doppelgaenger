@@ -19,7 +19,7 @@ echo_headers:
   - "Auth-Port"
   - "Auth-User"
   - "Auth-Error"
-  - "X-Nauthilus-Session"
+  - "X-Session-ID"
 
 # response_headers: static headers to include in every response.
 response_headers: {}

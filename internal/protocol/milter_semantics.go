@@ -1,8 +1,9 @@
 package protocol
 
-// Rspamd 4.1.1 negotiates SMFIP_NR_* for these transaction commands. They
-// update its per-message state, but do not open a request/reply turn. EOM is
-// deliberately absent: it returns zero or more actions and a disposition.
+// The supported no-reply profile uses SMFIP_NR_* semantics for these
+// transaction commands. They update per-message state, but do not open a
+// request/reply turn. EOM is deliberately absent: it returns zero or more
+// actions and a disposition.
 const (
 	milterAbortCommand   = 'A'
 	milterBodyCommand    = 'B'
@@ -20,12 +21,11 @@ const (
 )
 
 // MilterCommandExpectsResponse reports whether an MTA command starts a
-// request/reply turn. Rspamd 4.1.1 negotiates no-reply semantics for all
-// state-carrying MTA transaction commands below. It replies to option
-// negotiation and to EOM, which can contain action frames followed by a final
-// disposition. Unknown commands remain request/reply turns so that an
-// unsupported protocol extension fails closed instead of desynchronizing the
-// session.
+// request/reply turn. The current profile applies no-reply semantics to all
+// state-carrying MTA transaction commands below. It expects replies to option
+// negotiation and EOM; EOM can contain action frames followed by a final
+// disposition. Unknown commands remain request/reply turns so an unsupported
+// protocol extension fails closed instead of desynchronizing the session.
 func MilterCommandExpectsResponse(command byte) bool {
 	switch command {
 	case milterAbortCommand,
