@@ -17,9 +17,9 @@ func TestDockerRuntimeConfigIsConsistent(t *testing.T) {
 	compose := readRepoFile(t, root, "docker-compose.yml")
 	config := readRepoFile(t, root, "config.docker.yaml")
 
-	e2etest.MustContain(t, dockerfile, "EXPOSE 8443")
+	e2etest.MustContain(t, dockerfile, "EXPOSE 8080 8443 9444 9464 9999")
 	e2etest.MustContain(t, compose, `"8443:8443"`)
-	e2etest.MustContain(t, compose, "./config.docker.yaml:/app/config.yaml:ro")
+	e2etest.MustContain(t, compose, "./config.docker.yaml:/etc/doppelgaenger/config.yaml:ro")
 	e2etest.MustContain(t, config, `listen_addr: ":8443"`)
 }
 
@@ -33,9 +33,11 @@ func TestContainerImagesIncludeProjectLicense(t *testing.T) {
 	for _, name := range []string{"Dockerfile", "Dockerfile.faker"} {
 		t.Run(name, func(t *testing.T) {
 			dockerfile := readRepoFile(t, root, name)
-			e2etest.MustContain(t, dockerfile, `LABEL org.opencontainers.image.authors="Christian Rößner <c.roessner@team.mail.de>"`)
-			e2etest.MustContain(t, dockerfile, `LABEL org.opencontainers.image.licenses="MIT"`)
-			e2etest.MustContain(t, dockerfile, "COPY --from=builder /app/LICENSE ./LICENSE")
+			e2etest.MustContain(t, dockerfile, `org.opencontainers.image.authors="Christian Rößner <c.roessner@team.mail.de>"`)
+			e2etest.MustContain(t, dockerfile, `org.opencontainers.image.licenses="MIT"`)
+			e2etest.MustContain(t, dockerfile, "COPY --chmod=0444 LICENSE /app/LICENSE")
+			e2etest.MustContain(t, dockerfile, "USER 10001:10001")
+			e2etest.MustContain(t, dockerfile, "ARG RUNTIME_IMAGE=scratch")
 		})
 	}
 }

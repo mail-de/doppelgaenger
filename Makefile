@@ -1,46 +1,66 @@
-BINARY_NAME=doppelgaenger
-FAKE_BINARY_NAME=fakehttpserver
-VERSION=$(shell git describe --tags --always --dirty)
-GO_FILES=$(shell find . -name "*.go" -not -path "./vendor/*")
-SBOM_FILE=sbom.cdx.json
-SBOM_TOOL=github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
-export GOENV=greenteagc
-GOFLAGS=-mod=vendor
-LDFLAGS=-ldflags "-X main.version=$(VERSION)"
+BINARY_NAME := doppelgaenger
+FAKE_BINARY_NAME := fakehttpserver
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+REVISION ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+BUILD_DATE ?= unknown
+IMAGE_SOURCE ?= https://github.com/mail-de/doppelgaenger
+IMAGE_TAG ?= $(BINARY_NAME):$(VERSION)
+FAKE_IMAGE_TAG ?= $(FAKE_BINARY_NAME):$(VERSION)
+GO_IMAGE ?= golang:1.26.5-alpine3.23
+CERTS_IMAGE ?= alpine:3.23
+RUNTIME_IMAGE ?= scratch
+DOCKER ?= docker
+GO ?= go
+GOLANGCI_LINT ?= golangci-lint
+GOVULNCHECK ?= govulncheck
+GOVULNCHECK_GOFLAGS ?= -mod=vendor
+GOVULNCHECK_SCAN ?= package
+GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
+GOFLAGS := -mod=vendor
+LDFLAGS := -ldflags "-s -w -buildid= -X main.version=$(VERSION)"
+SYFT_VERSION ?= v1.16.0
 
-.PHONY: all vet lint fix build build-check build-fake clean test race e2e-http e2e-milter e2e-grpc e2e-docker e2e docker-build docker-build-fake docker-run sbom guardrails
+export GOENV := greenteagc
+
+.PHONY: all vet lint-config lint fix build build-check build-fake clean test race \
+	e2e-http e2e-milter e2e-grpc e2e-docker e2e \
+	docker-build docker-build-fake docker-build-all docker-smoke docker-run sbom \
+	check-packaging check-release-hardening guardrails govulncheck release-guardrails install-hooks
 
 all: build build-fake
 
 vet:
-	go vet $(GOFLAGS) ./...
+	$(GO) vet $(GOFLAGS) ./...
 
-lint:
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not found. Install it and rerun make guardrails"; exit 1; }
-	golangci-lint run ./...
+lint-config:
+	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { echo "$(GOLANGCI_LINT) not found. Install it and rerun make guardrails"; exit 1; }
+	$(GOLANGCI_LINT) config verify
+
+lint: lint-config
+	$(GOLANGCI_LINT) run ./...
 
 fix:
 	gofmt -w $(GO_FILES)
 
 build:
 	mkdir -p build
-	go build $(GOFLAGS) $(LDFLAGS) -o build/$(BINARY_NAME) main.go
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -trimpath -buildvcs=false $(LDFLAGS) -o build/$(BINARY_NAME) .
 
 build-check:
-	go build $(GOFLAGS) ./...
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -trimpath -buildvcs=false ./...
 
 build-fake:
 	mkdir -p build
-	go build $(GOFLAGS) $(LDFLAGS) -o build/$(FAKE_BINARY_NAME) cmd/fakehttpserver/main.go
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -trimpath -buildvcs=false $(LDFLAGS) -o build/$(FAKE_BINARY_NAME) ./cmd/fakehttpserver
 
 clean:
 	rm -f build/$(BINARY_NAME) build/$(FAKE_BINARY_NAME)
 
 test:
-	go test $(GOFLAGS) -v ./...
+	$(GO) test $(GOFLAGS) -v ./...
 
 race:
-	go test $(GOFLAGS) -race -short $$(go list $(GOFLAGS) ./... | grep -v /vendor/)
+	$(GO) test $(GOFLAGS) -race -short $$(go list $(GOFLAGS) ./... | grep -v /vendor/)
 
 e2e-http:
 	contrib/e2e/http/run.sh
@@ -56,16 +76,67 @@ e2e-docker:
 
 e2e: e2e-http e2e-milter e2e-grpc e2e-docker
 
+check-packaging:
+	bash ./scripts/check-packaging.sh
+
+check-release-hardening:
+	bash ./scripts/check-release-hardening.sh
+
 docker-build:
-	docker build --build-arg VERSION=$(VERSION) -t $(BINARY_NAME) .
+	$(DOCKER) build \
+		--file Dockerfile \
+		--build-arg VERSION="$(VERSION)" \
+		--build-arg REVISION="$(REVISION)" \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg SOURCE="$(IMAGE_SOURCE)" \
+		--build-arg GO_IMAGE="$(GO_IMAGE)" \
+		--build-arg CERTS_IMAGE="$(CERTS_IMAGE)" \
+		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
+		--tag "$(IMAGE_TAG)" \
+		.
 
 docker-build-fake:
-	docker build --build-arg VERSION=$(VERSION) -t $(FAKE_BINARY_NAME) -f Dockerfile.faker .
+	$(DOCKER) build \
+		--file Dockerfile.faker \
+		--build-arg VERSION="$(VERSION)" \
+		--build-arg REVISION="$(REVISION)" \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
+		--build-arg SOURCE="$(IMAGE_SOURCE)" \
+		--build-arg GO_IMAGE="$(GO_IMAGE)" \
+		--build-arg CERTS_IMAGE="$(CERTS_IMAGE)" \
+		--build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" \
+		--tag "$(FAKE_IMAGE_TAG)" \
+		.
+
+docker-build-all: docker-build docker-build-fake
+
+docker-smoke: docker-build
+	@set -e; \
+	output="$$( $(DOCKER) run --rm --network=none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m "$(IMAGE_TAG)" --version )"; \
+	case "$$output" in \
+		"doppelgaenger "*) printf '%s\n' "$$output" ;; \
+		*) printf 'docker-smoke: unexpected version output: %s\n' "$$output" >&2; exit 1 ;; \
+	esac
 
 docker-run:
-	docker run -p 8443:8443 $(BINARY_NAME)
+	$(DOCKER) run --rm -p 8443:8443 \
+		--mount type=bind,src="$(CURDIR)/config.docker.yaml",dst=/etc/doppelgaenger/config.yaml,readonly \
+		"$(IMAGE_TAG)"
 
 sbom:
-	go run $(SBOM_TOOL) mod -output $(SBOM_FILE) -json
+	bash ./scripts/sbom.sh \
+		--output-dir sbom \
+		--output-prefix $(BINARY_NAME) \
+		--skip-docker \
+		--syft-version $(SYFT_VERSION)
 
-guardrails: fix vet lint test race build-check
+guardrails: check-packaging check-release-hardening fix vet lint test race e2e build-check
+
+govulncheck:
+	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "$(GOVULNCHECK) not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
+	CGO_ENABLED=0 GOFLAGS="$(GOVULNCHECK_GOFLAGS)" $(GOVULNCHECK) -scan=$(GOVULNCHECK_SCAN) ./...
+
+release-guardrails: guardrails govulncheck
+
+install-hooks:
+	bash ./scripts/install-hooks.sh

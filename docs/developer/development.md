@@ -22,7 +22,7 @@ rules are:
 
 ## Toolchain
 
-The current build surfaces use Go 1.26.3 and `GOENV=greenteagc`. Normal Makefile
+The current build surfaces use Go 1.26.5 and `GOENV=greenteagc`. Normal Makefile
 builds use `-mod=vendor`.
 
 ```sh
@@ -49,12 +49,14 @@ make guardrails
 
 The target runs, in order:
 
-1. `make fix`
-2. `make vet`
-3. `make lint`
-4. `make test`
-5. `make race`
-6. `make build-check`
+1. static packaging and release-hardening checks
+2. `make fix`
+3. `make vet`
+4. `make lint`
+5. `make test`
+6. `make race`
+7. `make e2e`
+8. `make build-check`
 
 All findings must be fixed. Do not hide a lint or race failure behind a narrower
 ad hoc command.
@@ -73,7 +75,9 @@ ad hoc command.
 | `test` | Run all Go package tests verbosely. |
 | `race` | Run short package tests with the race detector. |
 | `build-check` | Build every Go package. |
-| `guardrails` | Run formatting, vet, lint, tests, race tests, and build check. |
+| `guardrails` | Run static supply-chain checks, formatting, vet, lint, unit/race/E2E tests, and build check. |
+| `govulncheck` | Analyze reachable vulnerabilities using vendored dependencies. |
+| `release-guardrails` | Run all guardrails followed by `govulncheck`. |
 | `e2e-http` | Run the HTTP E2E suite. |
 | `e2e-grpc` | Run the gRPC E2E suite. |
 | `e2e-milter` | Run the Milter E2E suite. |
@@ -81,8 +85,10 @@ ad hoc command.
 | `e2e` | Run all E2E targets. |
 | `docker-build` | Build the main local image as `doppelgaenger`. |
 | `docker-build-fake` | Build the fake HTTP image as `fakehttpserver`. |
-| `docker-run` | Run the main image with only port 8443 published. It does not mount the required configuration or certificates, so prefer the documented explicit `docker run` command. |
-| `sbom` | Generate `sbom.cdx.json` with CycloneDX. |
+| `docker-run` | Run the main image with `config.docker.yaml` mounted at the image's default configuration path. |
+| `docker-smoke` | Build the hardened image and verify its version entrypoint under a read-only, networkless runtime. |
+| `sbom` | Generate an SPDX JSON source SBOM with a checksum-verified Syft binary. |
+| `install-hooks` | Install the release-sensitive pre-push `govulncheck` hook. |
 
 ## Changing protocol behavior
 

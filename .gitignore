@@ -39,7 +39,9 @@ atlassian-ide-plugin.xml
 *.prof
 coverage.*
 out/
+bin/
 build/
+dist/
 cmake-build-*/
 go.work
 go.work.sum
@@ -53,6 +55,7 @@ outputs/
 
 # Generated security/material reports.
 sbom.cdx.json
+sbom/
 
 # Local TLS material mounted by docker-compose.
 certs/*.pem

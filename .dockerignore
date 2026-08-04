@@ -1,18 +1,25 @@
 .git
+.github
 .gitignore
-.dockerignore
-.idea/
-.agents/
-.codex/
+.DS_Store
+.idea
+.agents
+.codex
 
-build/
-outputs/
-temp/
-tmp/
+bin
+build
+coverage.out
+dist
+outputs
+sbom
+sbom.cdx.json
+temp
+tmp
 
 *.log
 *.out
-*.test
 *.prof
+*.test
 coverage.*
-sbom.cdx.json
+**/*_test.go
+**/*.test

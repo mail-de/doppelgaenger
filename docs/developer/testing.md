@@ -12,7 +12,9 @@ transport behavior remains covered.
 | `make vet` | Go vet with vendored modules |
 | `make lint` | Full `golangci-lint run ./...` |
 | `make build-check` | Build every package |
-| `make guardrails` | Format, vet, lint, test, race, and build check |
+| `make guardrails` | Static packaging and release checks, format, vet, lint, unit/race/E2E tests, and build check |
+| `make govulncheck` | Reachability-aware Go vulnerability analysis |
+| `make release-guardrails` | Full guardrails plus vulnerability analysis |
 
 `make fix` runs `gofmt` across non-vendored Go files and therefore changes the
 working tree when formatting is needed.
@@ -26,6 +28,11 @@ working tree when formatting is needed.
 | `make e2e-milter` | Primary/Shadow frames, sampling, comparison, metrics, OTLP, and a complete transaction against the fixed no-reply profile |
 | `make e2e-docker` | Dockerfile, Compose port, mounted configuration, and listener agreement |
 | `make e2e` | All four targets in sequence |
+
+The GitHub workflows run these contracts on `main`, `features`, release
+branches, pull requests, and release tags as appropriate. See
+[Releases and automation](releases.md) for the exact trigger and artifact
+behavior.
 
 The no-reply-profile E2E uses a repository-owned backend. It has no external
 image dependency and always exercises option negotiation, state commands, and

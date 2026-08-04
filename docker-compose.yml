@@ -10,7 +10,7 @@ services:
     ports:
       - "8443:8443"
     volumes:
-      - ./config.docker.yaml:/app/config.yaml:ro
+      - ./config.docker.yaml:/etc/doppelgaenger/config.yaml:ro
       - ./certs:/certs:ro
     restart: unless-stopped
 

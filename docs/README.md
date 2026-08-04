@@ -43,6 +43,8 @@ operator guides and the annotated [`config.yaml`](../config.yaml).
 - [Development](developer/development.md): toolchain, workflow, code changes,
   and Definition of Done
 - [Testing](developer/testing.md): unit, race, E2E, Docker, and coverage intent
+- [Releases and automation](developer/releases.md): branches, GitHub Actions,
+  release tags, artifacts, images, SBOMs, and provenance
 - [Test tools](developer/test-tools.md): the fake backends, probes, and fake
   OTLP collector shipped in this repository
 

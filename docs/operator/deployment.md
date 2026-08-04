@@ -6,7 +6,7 @@ not a production topology.
 
 ## Build the binary
 
-The project requires Go 1.26.3 or later and uses the vendored module tree.
+The project requires Go 1.26.5 or later and uses the vendored module tree.
 
 ```sh
 make build
@@ -26,19 +26,22 @@ The supported CLI options are `--config`/`-c`, `--version`, and
 make docker-build
 docker run --rm \
   -p 8443:8443 \
-  -v "$PWD/config.docker.yaml:/app/config.yaml:ro" \
+  -v "$PWD/config.docker.yaml:/etc/doppelgaenger/config.yaml:ro" \
   -v "$PWD/certs:/certs:ro" \
   doppelgaenger
 ```
 
-The final image is `scratch`. It contains the proxy, the MIT license at
-`/app/LICENSE`, the generated CycloneDX SBOM at `/app/sbom.cdx.json`, CA
-certificates, and UTC zone data. It does not contain a shell or an application
+The final image is `scratch` and runs as the dedicated numeric user and group
+`10001:10001`. It contains only the proxy, the MIT license at `/app/LICENSE`,
+CA certificates, UTC zone data, and the minimum account files required for the
+non-root identity. It has no shell, package manager, or application
 configuration. Mount the configuration and every referenced certificate or CA
-explicitly.
+explicitly. The image is compatible with a read-only root filesystem when a
+writable temporary filesystem is mounted at `/tmp`.
 
-The image declares port 8443 because it is paired with `config.docker.yaml`.
-Other protocol ports must be published explicitly.
+The image declares the documented HTTP, HTTPS, gRPC, Prometheus, and Milter
+ports. `EXPOSE` is informational; publish only the listeners enabled by the
+selected configuration.
 
 ## Local Docker Compose demo
 
@@ -120,7 +123,9 @@ private keys in a committed configuration.
 make sbom
 ```
 
-This writes `sbom.cdx.json` in the repository. Container builds generate and
+This writes `sbom/doppelgaenger-source.spdx.json`. Release archives include an
+SPDX JSON SBOM and SHA-256 checksum. Stable multi-platform images published by
+GitHub Actions include BuildKit SBOM and maximum-provenance attestations.
 
 The MIT license covers project-owned work. Dependencies listed by the SBOM and
 vendored in the repository retain their own licenses.
