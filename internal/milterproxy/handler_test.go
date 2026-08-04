@@ -188,8 +188,15 @@ func TestHandleConnCompletesRspamdCompatibleEOMReplySequence(t *testing.T) {
 		}
 	}()
 
+	runRspamdCompatibleMilterTransaction(t, client)
+}
+
+func runRspamdCompatibleMilterTransaction(t *testing.T, client net.Conn) {
+	t.Helper()
+
 	for _, request := range []protocol.MilterFrame{
 		{Command: 'O', Payload: testMilterOptionNegotiationPayload()},
+		{Command: 'D', Payload: []byte("C\x00j\x00mail.example.test\x00")},
 		{Command: 'C', Payload: []byte("smtp.example.test\x000\x00")},
 		{Command: 'H', Payload: []byte("client.example.test\x00")},
 		{Command: 'M', Payload: []byte("<sender@example.test>\x00")},
@@ -199,6 +206,13 @@ func TestHandleConnCompletesRspamdCompatibleEOMReplySequence(t *testing.T) {
 		{Command: 'B', Payload: []byte("message body\r\n")},
 	} {
 		writeMilterTestFrame(t, client, request.Command, request.Payload)
+
+		if request.Command == 'D' {
+			assertMilterTestNoReply(t, client)
+
+			continue
+		}
+
 		assertMilterTestReply(t, client, expectedMilterReply(request.Command))
 	}
 
@@ -240,6 +254,10 @@ func startRspamdCompatibleMilter(t *testing.T) (string, <-chan struct{}) {
 				_, _ = conn.Write(testMilterFrame('h', []byte("X-Rspamd-Test\x00passed\x00")))
 				_, _ = conn.Write(testMilterFrame('c', nil))
 
+				continue
+			}
+
+			if frame.Command == 'D' {
 				continue
 			}
 
@@ -295,6 +313,23 @@ func assertMilterTestReply(t *testing.T, conn net.Conn, command byte) {
 
 	if frame.Command != command {
 		t.Fatalf("expected Milter reply %q, got %q", command, frame.Command)
+	}
+}
+
+func assertMilterTestNoReply(t *testing.T, conn net.Conn) {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatalf("set no-reply deadline: %v", err)
+	}
+
+	_, err := protocol.ReadFrame(conn)
+	if err == nil {
+		t.Fatal("expected no Milter reply")
+	}
+
+	if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+		t.Fatalf("expected Milter no-reply timeout, got %v", err)
 	}
 }
 

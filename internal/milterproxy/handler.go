@@ -147,7 +147,14 @@ func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession
 	}
 
 	result := h.runner.RunPrimaryEvent(primarySession, event)
-	if !h.writePrimaryFrame(frameCtx, conn, result, reqID, traceID, span, frameStart, command, shadowEnabled) {
+	if protocol.MilterCommandExpectsResponse(frame.Command) {
+		if !h.writePrimaryFrame(frameCtx, conn, result, reqID, traceID, span, frameStart, command, shadowEnabled) {
+			return false
+		}
+	} else if result.Primary.Err != nil {
+		h.finishFrame(frameCtx, span, frameStart, command, shadowEnabled, observability.OutcomePrimaryError, result.Primary.Err, result)
+		h.logger.Error("milter_primary_failed", "req_id", reqID, "trace_id", traceID, "err", result.Primary.Err)
+
 		return false
 	}
 

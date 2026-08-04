@@ -71,6 +71,12 @@ func (r Runner) runPrimary(primary TestSession, event Event, result *RunResult) 
 		return false
 	}
 
+	if !eventExpectsResponse(event) {
+		result.Primary = Response{Proto: event.Kind}
+
+		return true
+	}
+
 	primaryRes, err := primary.Receive()
 	if err != nil && primaryRes.Err == nil {
 		primaryRes.Err = err
@@ -103,6 +109,12 @@ func (r Runner) runShadow(ctx context.Context, shadow TestSession, event Event, 
 	go func() {
 		if err := shadow.Send(shadowEvent); err != nil {
 			errCh <- err
+
+			return
+		}
+
+		if !eventExpectsResponse(shadowEvent) {
+			shadowCh <- Response{Proto: shadowEvent.Kind}
 
 			return
 		}
