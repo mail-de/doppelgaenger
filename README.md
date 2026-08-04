@@ -67,7 +67,10 @@ These settings apply across protocols unless a protocol-specific section says ot
 #### Milter-specific Settings
 - `milter_listen_addr`: TCP address for the Milter proxy listener.
 - `primary_milter_addr` / `shadow_milter_addr`: TCP addresses of the Milter backends.
-- `milter_timeout`: Timeout for Milter upstream operations.
+- `milter_timeout`: Timeout for Milter upstream operations. Shadow Milter work
+  is asynchronous and serialized per client connection; it never delays the
+  Primary response. If the bounded shadow queue fills or the shadow session
+  fails, shadowing stops for that connection while Primary remains fail-closed.
 
 #### gRPC-specific Settings
 - `grpc_listen_addr`: TCP address for the gRPC proxy listener. Plaintext gRPC uses HTTP/2 prior knowledge when `grpc_tls.enabled` is false.
@@ -489,7 +492,7 @@ grpcprobe \
 6. **Observability & Logging**: A single structured log line is generated containing details about primary and shadow work, durations, selected targets, statuses, comparison outcome, and sanitized diffs. When tracing is active, outgoing HTTP and gRPC primary/shadow requests receive W3C `traceparent` plus the configured bare trace-ID carrier.
 
 ### Milter Mode
-When `protocol: milter`, the proxy listens on `milter_listen_addr` and forwards incoming Milter frames to the primary backend, mirrors them to the shadow backend, compares decisions/raw frames, and logs any differences.
+When `protocol: milter`, the proxy listens on `milter_listen_addr` and forwards incoming Milter frames to the primary backend. It returns each Primary response before asynchronously mirroring the frame to the shadow backend. Shadow frames are serialized per client connection, then their decisions/raw frames are compared and logged. A slow, unavailable, or overloaded shadow path stops shadowing only for that connection; it never delays or changes the Primary response, which remains fail-closed.
 
 ### gRPC Mode
 When `protocol: grpc`, the proxy listens on `grpc_listen_addr` with optional TLS/mTLS and forwards arbitrary gRPC methods through a generic unknown-service handler. Primary headers, trailers, payload messages, and status are client-visible. Shadow headers, trailers, payload counts/hashes, status, queue-full conditions, timeouts, and errors are used for logs, metrics, traces, and comparison only.

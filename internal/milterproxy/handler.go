@@ -95,11 +95,12 @@ func (h *Handler) HandleConn(conn net.Conn) {
 		_ = primarySession.Close()
 	}()
 
-	shadowSession, shadowEnabled := h.shadowSession(ctx)
-	if shadowSession != nil {
-		defer func() {
-			_ = shadowSession.Close()
-		}()
+	shadowEnabled := h.shadowEnabled()
+
+	var shadowWorker *milterShadowWorker
+	if shadowEnabled {
+		shadowWorker = newMilterShadowWorker(h.adapter, h.runner, h.logger)
+		defer shadowWorker.Close()
 	}
 
 	for {
@@ -108,7 +109,7 @@ func (h *Handler) HandleConn(conn net.Conn) {
 			return
 		}
 
-		if !h.handleFrame(ctx, conn, primarySession, shadowSession, shadowEnabled, frame) {
+		if !h.handleFrame(ctx, conn, primarySession, shadowWorker, shadowEnabled, frame) {
 			return
 		}
 	}
@@ -128,7 +129,7 @@ func (h *Handler) shouldStopMilterLoop(err error) bool {
 	return true
 }
 
-func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession, shadowSession protocol.TestSession, shadowEnabled bool, frame protocol.MilterFrame) bool {
+func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession protocol.TestSession, shadowWorker *milterShadowWorker, shadowEnabled bool, frame protocol.MilterFrame) bool {
 	reqID := h.requestID.Add(1)
 	command := string(frame.Command)
 	frameCtx, span := h.startFrameSpan(ctx, reqID, command)
@@ -145,12 +146,30 @@ func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession
 		},
 	}
 
-	result := h.runner.RunEvent(frameCtx, primarySession, shadowSession, event)
+	result := h.runner.RunPrimaryEvent(primarySession, event)
 	if !h.writePrimaryFrame(frameCtx, conn, result, reqID, traceID, span, frameStart, command, shadowEnabled) {
 		return false
 	}
 
-	h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, span, frameStart, result)
+	h.finishFrame(frameCtx, span, frameStart, command, shadowEnabled, observability.OutcomeOK, nil, result)
+
+	if shadowWorker == nil {
+		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result)
+
+		return true
+	}
+
+	accepted := shadowWorker.Submit(milterShadowWork{
+		event:   event,
+		primary: result.Primary,
+		onComplete: func(shadowResult protocol.RunResult) {
+			h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, shadowResult)
+		},
+	})
+	if !accepted {
+		h.logger.Warn("milter_shadow_queue_full", "req_id", reqID, "trace_id", traceID)
+		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result)
+	}
 
 	return true
 }
@@ -201,8 +220,6 @@ func (h *Handler) logFrameResult(
 	traceID string,
 	command string,
 	shadowEnabled bool,
-	span trace.Span,
-	frameStart time.Time,
 	result protocol.RunResult,
 ) {
 	shadowSelected := result.Shadow.Selected
@@ -214,7 +231,6 @@ func (h *Handler) logFrameResult(
 		h.observability.ObserveComparison(frameCtx, protocolMilter, milterComparisonMetricResult(shadowEnabled, result))
 	}
 
-	h.finishFrame(frameCtx, span, frameStart, command, shadowEnabled, observability.OutcomeOK, nil, result)
 	h.logger.Info("milter_proxy",
 		"req_id", reqID,
 		"trace_id", traceID,
@@ -244,7 +260,7 @@ func (h *Handler) finishFrame(ctx context.Context, span trace.Span, frameStart t
 	h.observability.EndSpan(span, err)
 }
 
-func (h *Handler) shadowSession(ctx context.Context) (protocol.TestSession, bool) {
+func (h *Handler) shadowEnabled() bool {
 	forcedShadow := false
 
 	sampledShadow := false
@@ -262,16 +278,10 @@ func (h *Handler) shadowSession(ctx context.Context) (protocol.TestSession, bool
 	}
 
 	if !doShadow {
-		return nil, false
+		return false
 	}
 
-	shadowSession, err := h.adapter.NewSession(ctx, protocol.TargetShadow)
-	if err != nil {
-		h.logger.Error("milter_shadow_session_failed", "err", err)
-		return nil, true
-	}
-
-	return shadowSession, true
+	return true
 }
 
 func (h *Handler) randIntn(n int) int {

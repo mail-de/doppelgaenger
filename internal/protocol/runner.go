@@ -25,8 +25,8 @@ type RunResult struct {
 
 // RunEvent sends one event to primary and optional shadow sessions.
 func (r Runner) RunEvent(ctx context.Context, primary TestSession, shadow TestSession, event Event) RunResult {
-	result := RunResult{}
-	if !r.runPrimary(primary, event, &result) {
+	result := r.RunPrimaryEvent(primary, event)
+	if result.Primary.Err != nil || result.CompareErr != nil {
 		return result
 	}
 
@@ -34,6 +34,23 @@ func (r Runner) RunEvent(ctx context.Context, primary TestSession, shadow TestSe
 		return result
 	}
 
+	return r.RunShadowEvent(ctx, shadow, event, result.Primary)
+}
+
+// RunPrimaryEvent sends an event to the primary session. Callers that need to
+// return the primary response before completing shadow work can use this with
+// RunShadowEvent.
+func (r Runner) RunPrimaryEvent(primary TestSession, event Event) RunResult {
+	result := RunResult{}
+	r.runPrimary(primary, event, &result)
+
+	return result
+}
+
+// RunShadowEvent sends an event to the shadow session and compares its result
+// with an already completed primary response.
+func (r Runner) RunShadowEvent(ctx context.Context, shadow TestSession, event Event, primary Response) RunResult {
+	result := RunResult{Primary: primary}
 	r.runShadow(ctx, shadow, event, &result)
 	r.compareResponses(&result)
 
