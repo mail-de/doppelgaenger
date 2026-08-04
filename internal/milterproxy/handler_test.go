@@ -196,8 +196,8 @@ func runRspamdCompatibleMilterTransaction(t *testing.T, client net.Conn) {
 
 	for _, request := range []protocol.MilterFrame{
 		{Command: 'O', Payload: testMilterOptionNegotiationPayload()},
-		{Command: 'D', Payload: []byte("C\x00j\x00mail.example.test\x00")},
-		{Command: 'C', Payload: []byte("smtp.example.test\x000\x00")},
+		{Command: 'D', Payload: []byte("Cj\x00mail.example.test\x00")},
+		{Command: 'C', Payload: testMilterConnectPayload()},
 		{Command: 'H', Payload: []byte("client.example.test\x00")},
 		{Command: 'M', Payload: []byte("<sender@example.test>\x00")},
 		{Command: 'R', Payload: []byte("<recipient@example.test>\x00")},
@@ -207,7 +207,7 @@ func runRspamdCompatibleMilterTransaction(t *testing.T, client net.Conn) {
 	} {
 		writeMilterTestFrame(t, client, request.Command, request.Payload)
 
-		if request.Command == 'D' {
+		if !protocol.MilterCommandExpectsResponse(request.Command) {
 			assertMilterTestNoReply(t, client)
 
 			continue
@@ -257,7 +257,7 @@ func startRspamdCompatibleMilter(t *testing.T) (string, <-chan struct{}) {
 				continue
 			}
 
-			if frame.Command == 'D' {
+			if !protocol.MilterCommandExpectsResponse(frame.Command) {
 				continue
 			}
 
@@ -289,6 +289,15 @@ func testMilterOptionNegotiationPayload() []byte {
 	binary.BigEndian.PutUint32(payload, 6)
 
 	return payload
+}
+
+func testMilterConnectPayload() []byte {
+	payload := append([]byte("client.example.test\x00"), '4')
+	port := make([]byte, 2)
+	binary.BigEndian.PutUint16(port, 25)
+	payload = append(payload, port...)
+
+	return append(payload, []byte("127.0.0.1\x00")...)
 }
 
 func writeMilterTestFrame(t *testing.T, conn net.Conn, command byte, payload []byte) {
