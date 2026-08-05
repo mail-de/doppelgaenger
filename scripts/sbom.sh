@@ -7,8 +7,10 @@ set -euo pipefail
 root_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="${OUTPUT_DIR:-${root_dir}/sbom}"
 output_prefix="${OUTPUT_PREFIX:-doppelgaenger}"
+output_prefix_set=false
 source_dir="${SOURCE_DIR:-$root_dir}"
 skip_source=false
+file_target=""
 docker_image=""
 skip_docker=false
 syft_version="${SYFT_VERSION:-v1.16.0}"
@@ -101,9 +103,10 @@ ensure_syft() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--output-dir) output_dir="$2"; shift 2 ;;
-		--output-prefix) output_prefix="$2"; shift 2 ;;
+		--output-prefix) output_prefix="$2"; output_prefix_set=true; shift 2 ;;
 		--source-dir) source_dir="$2"; shift 2 ;;
 		--skip-source) skip_source=true; shift ;;
+		--file) file_target="$2"; shift 2 ;;
 		--docker-image) docker_image="$2"; shift 2 ;;
 		--skip-docker) skip_docker=true; shift ;;
 		--syft-version) syft_version="$2"; shift 2 ;;
@@ -112,6 +115,10 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+if [[ -n "$file_target" && "$output_prefix_set" == false && "$output_prefix" == doppelgaenger ]]; then
+	output_prefix="$(basename -- "$file_target")"
+fi
+
 ensure_syft
 mkdir -p "$output_dir"
 
@@ -119,6 +126,12 @@ if [[ "$skip_source" == false ]]; then
 	[[ -d "$source_dir" ]] || { printf 'Source directory not found: %s\n' "$source_dir" >&2; exit 1; }
 	"$syft_bin" "dir:${source_dir}" -o "spdx-json=${output_dir}/${output_prefix}-source.spdx.json"
 	pretty_print_json "${output_dir}/${output_prefix}-source.spdx.json"
+fi
+
+if [[ -n "$file_target" ]]; then
+	[[ -f "$file_target" ]] || { printf 'File target not found: %s\n' "$file_target" >&2; exit 1; }
+	"$syft_bin" "$file_target" -o "spdx-json=${output_dir}/${output_prefix}.spdx.json"
+	pretty_print_json "${output_dir}/${output_prefix}.spdx.json"
 fi
 
 if [[ "$skip_docker" == false && -n "$docker_image" ]]; then

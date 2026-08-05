@@ -20,6 +20,19 @@ process writes logs to stdout and stderr; it does not manage log files.
 The supported CLI options are `--config`/`-c`, `--version`, and
 `--help`/`-h`. Positional arguments are rejected.
 
+## Debian and RPM packages
+
+GitHub Releases provide `.deb` packages for amd64 and arm64 and an `.rpm`
+package for x86_64. Every package has a separate SHA-256 checksum and SPDX JSON
+SBOM asset. The packages install the binary as `/usr/local/bin/doppelgaenger`,
+the systemd units below `/usr/lib/systemd/system`, and the annotated
+configuration example below `/usr/share/doc/doppelgaenger`.
+
+Package installation does not create or replace
+`/etc/doppelgaenger/config.yaml`, enable the units, or start Doppelgaenger.
+Copy and review the annotated configuration first, run `systemctl
+daemon-reload`, then enable the socket and service explicitly.
+
 ## Container image
 
 ```sh

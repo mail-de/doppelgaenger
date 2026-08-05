@@ -52,8 +52,9 @@ Prereleases use a SemVer suffix such as `v1.2.3-rc.1`. The tag triggers three
 independent gates:
 
 1. Govulncheck validates reachable dependency vulnerabilities.
-2. Release Build creates Linux archives for amd64 and arm64, SPDX JSON SBOMs,
-   SHA-256 checksum files, and a GitHub Release.
+2. Release Build creates Linux archives and Debian packages for amd64 and
+   arm64, an RPM package for x86_64, per-asset SPDX JSON SBOMs and SHA-256
+   checksum files, and a GitHub Release.
 3. Production Docker Build publishes an amd64/arm64 image index to GHCR with
    SBOM and maximum-provenance attestations.
 
@@ -62,6 +63,14 @@ The GitHub-native archive-attestation step is retained behind
 GitHub Free repository and can be enabled if the repository moves to GitHub
 Enterprise Cloud or becomes public. This plan limit does not disable the
 BuildKit SBOM and provenance attached to GHCR images.
+
+Native packages follow the same SHA-pinned build pattern as the Nauthilus
+release workflow. They install the binary as `/usr/local/bin/doppelgaenger`,
+install the example systemd service and socket units, and place the annotated
+configuration under `/usr/share/doc/doppelgaenger`. Package installation does
+not create or replace `/etc/doppelgaenger/config.yaml`, and it does not enable
+or start the service. Review and install the configuration before activating
+the units.
 
 Stable releases publish the exact tag plus `latest`, `vMAJOR`, and
 `vMAJOR.MINOR`. Prereleases publish only their exact tag. OCI metadata records

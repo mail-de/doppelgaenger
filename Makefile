@@ -25,7 +25,8 @@ export GOENV := greenteagc
 .PHONY: all vet lint-config lint fix build build-check build-fake clean test race \
 	e2e-http e2e-milter e2e-grpc e2e-docker e2e \
 	docker-build docker-build-fake docker-build-all docker-smoke docker-run sbom \
-	check-packaging check-release-hardening guardrails govulncheck release-guardrails install-hooks
+	check-packaging check-release-hardening check-release-packages guardrails govulncheck \
+	release-guardrails install-hooks
 
 all: build build-fake
 
@@ -82,6 +83,9 @@ check-packaging:
 check-release-hardening:
 	bash ./scripts/check-release-hardening.sh
 
+check-release-packages:
+	bash ./scripts/check-release-packages.sh
+
 docker-build:
 	$(DOCKER) build \
 		--file Dockerfile \
@@ -130,7 +134,7 @@ sbom:
 		--skip-docker \
 		--syft-version $(SYFT_VERSION)
 
-guardrails: check-packaging check-release-hardening fix vet lint test race e2e build-check
+guardrails: check-packaging check-release-hardening check-release-packages fix vet lint test race e2e build-check
 
 govulncheck:
 	@command -v $(GOVULNCHECK) >/dev/null 2>&1 || { echo "$(GOVULNCHECK) not found. Install it with: go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
