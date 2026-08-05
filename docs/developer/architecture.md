@@ -60,6 +60,41 @@ If Shadow is selected for the connection, a fixed-capacity worker queue
 serializes frames onto one lazily opened Shadow session. Queue overflow or a
 Shadow failure disables the worker for the rest of that connection.
 
+## Protocol timing comparison
+
+The three modes share the Primary safety boundary, but schedule Shadow work at
+different points because their protocol lifecycles differ.
+
+```mermaid
+flowchart TB
+    subgraph http["HTTP request"]
+        h1["Read and validate request"] --> h2["Complete Primary request"]
+        h2 --> h3["Prepare and return Primary response"]
+        h3 --> h4["Run detached Shadow request"]
+        h4 --> h5["Compare completed responses"]
+    end
+
+    subgraph grpc["gRPC stream"]
+        g1["Open Primary stream"] --> g2["Forward messages to Primary"]
+        g1 --> g3["Queue messages for Shadow"]
+        g2 --> g4["Forward Primary responses"]
+        g3 --> g5["Collect Shadow state or time out"]
+        g4 --> g6["Finish RPC after bounded wait"]
+        g5 --> g6
+    end
+
+    subgraph milter["Milter connection"]
+        m1["Receive ordered frame"] --> m2["Complete synchronous Primary turn"]
+        m2 --> m4["Return Primary reply when required"]
+        m4 --> m3["Queue frame for one Shadow worker"]
+        m3 --> m5["Preserve per-connection order"]
+    end
+```
+
+For gRPC, final completion waits for Shadow only up to
+`grpc_shadow_timeout`. The HTTP client does not wait for detached Shadow work,
+and the Milter client waits only for the synchronous Primary exchange.
+
 ## Cross-cutting safety boundaries
 
 - Rules and target selectors are deterministic after configuration is loaded.

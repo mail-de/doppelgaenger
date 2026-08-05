@@ -30,6 +30,27 @@ When both results are available, a protocol-specific comparator records one of
 `same`, `diff`, `error`, or `skipped`. The result is available through
 structured logs and, when enabled, metrics and traces.
 
+```mermaid
+flowchart LR
+    client["Client or MTA"] --> ingress["Active protocol handler"]
+    ingress --> policy["Rules, sampling, and rate limit"]
+    policy --> primary["Primary backend"]
+    primary --> visible["Client-visible Primary result"]
+    visible --> client
+
+    policy --> decision{"Shadow selected?"}
+    decision -- "No" --> skipped["Record skipped reason"]
+    decision -- "Yes" --> shadow["Shadow backend"]
+    primary --> compare["Protocol comparator"]
+    shadow --> compare
+    compare --> result["same, diff, error, or skipped"]
+    skipped --> observe["Logs, metrics, and traces"]
+    result --> observe
+```
+
+The Shadow branch can delay comparison bookkeeping for some protocols, but it
+does not become an alternate response path to the client.
+
 ## Guarantees
 
 Doppelgaenger is designed around these observable guarantees:

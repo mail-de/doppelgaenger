@@ -37,6 +37,25 @@ Use the [HTTP](../tutorials/http-first-shadow.md),
 [gRPC](../tutorials/grpc-first-shadow.md), or
 [Milter](../tutorials/milter-rollout.md) tutorial for concrete probes.
 
+```mermaid
+flowchart TD
+    deploy["Deploy with Shadow disabled"] --> ready{"Listener ready?"}
+    ready -- "No" --> restore["Restore previous binary or image and configuration"]
+    ready -- "Yes" --> smoke{"Primary protocol smoke passes?"}
+    smoke -- "No" --> restore
+    smoke -- "Yes" --> bounded["Enable one narrow rule or small sample"]
+    bounded --> probe["Send a known probe"]
+    probe --> observed{"Expected Shadow result observed?"}
+    observed -- "No" --> contain["Set sample to 0 and investigate Shadow"]
+    observed -- "Yes" --> stable{"Primary errors and latency remain stable?"}
+    stable -- "No" --> contain
+    stable -- "Yes" --> increase["Increase Shadow volume gradually"]
+    contain --> smoke
+```
+
+The containment branch keeps the proven Primary proxy path in place. Use the
+full restore branch when readiness or the Primary smoke fails.
+
 ## Readiness check
 
 With Prometheus enabled on plaintext localhost:
