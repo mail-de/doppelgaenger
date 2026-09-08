@@ -5,7 +5,7 @@
 set -euo pipefail
 
 certs_image="${CERTS_IMAGE:-alpine:3.23}"
-golang_image="${GO_IMAGE:-golang:1.26.5-alpine3.23}"
+golang_image="${GO_IMAGE:-golang:1.27.1-alpine3.23}"
 
 hash_cmd() {
 	if command -v sha256sum >/dev/null 2>&1; then

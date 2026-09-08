@@ -22,7 +22,7 @@ rules are:
 
 ## Toolchain
 
-The current build surfaces use Go 1.26.5 and `GOENV=greenteagc`. Normal Makefile
+The current build surfaces use Go 1.27.1 and `GOEXPERIMENT=runtimesecret`. Normal Makefile
 builds use `-mod=vendor`.
 
 ```sh

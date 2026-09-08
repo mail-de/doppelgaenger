@@ -19,6 +19,20 @@ transport behavior remains covered.
 `make fix` runs `gofmt` across non-vendored Go files and therefore changes the
 working tree when formatting is needed.
 
+## Vulnerability evidence
+
+`make govulncheck` defaults to package-level analysis (`GOVULNCHECK_SCAN=package`)
+using the vendored tree. Use `make govulncheck GOVULNCHECK_SCAN=symbol` when
+call-level evidence is needed. A clean result only covers advisories present in
+the scanner database; check current maintainer advisories and a fresh secondary
+scan before release. Module-only alerts require checking the affected package
+against the actual import graph. Do not suppress an entire module because one
+unused package has an advisory.
+
+The [2026-09-07 review](security-review-2026-09-07.md) records an example where
+the gRPC maintainer advisory preceded Go database coverage, plus the disposition
+of upstream Dockerfiles and the unused OpenPGP package.
+
 ## End-to-end targets
 
 | Target | Verified behavior |

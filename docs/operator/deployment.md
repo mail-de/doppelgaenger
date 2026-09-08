@@ -6,7 +6,7 @@ not a production topology.
 
 ## Build the binary
 
-The project requires Go 1.26.5 or later and uses the vendored module tree.
+The project requires Go 1.27.1 or later and uses the vendored module tree.
 
 ```sh
 make build
@@ -55,6 +55,26 @@ writable temporary filesystem is mounted at `/tmp`.
 The image declares the documented HTTP, HTTPS, gRPC, Prometheus, and Milter
 ports. `EXPOSE` is informational; publish only the listeners enabled by the
 selected configuration.
+
+### Readiness probes
+
+Neither image embeds a Docker `HEALTHCHECK`. The scratch runtime contains no
+shell or HTTP probe client, and the proxy's readiness listener is opt-in and
+configuration-dependent. Configure an external HTTP probe for `/healthz` on the
+observability listener after enabling it; see [Observability](observability.md).
+A Kubernetes HTTP probe runs outside the image. Use the configured TLS settings
+and port, and do not expose the metrics listener publicly just for a probe.
+A process/version check does not prove listener readiness or backend health.
+The fake HTTP image is a test tool; its `/healthz` endpoint can likewise be
+probed externally. Trivy DS-0026 remains visible for both Dockerfiles.
+
+### gRPC receive buffer protection
+
+The vendored gRPC release enables receive buffer compaction to bound overhead
+from fragmented HTTP/2 DATA frames (CVE-2026-84304). Do not set
+`GRPC_GO_EXPERIMENTAL_ENABLE_RECEIVE_BUFFER_COMPACTION=false`, which disables
+this protection. Rebuild and replace existing binaries/images to apply the
+patched dependency; a source update does not update running processes.
 
 ## Local Docker Compose demo
 

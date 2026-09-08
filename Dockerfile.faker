@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_IMAGE=golang:1.26.5-alpine3.23
+ARG GO_IMAGE=golang:1.27.1-alpine3.23
 ARG CERTS_IMAGE=alpine:3.23
 ARG RUNTIME_IMAGE=scratch
 
@@ -13,7 +13,7 @@ ARG VERSION=dev
 WORKDIR /src
 
 ENV CGO_ENABLED=0 \
-    GOENV=greenteagc \
+    GOEXPERIMENT=runtimesecret \
     GOFLAGS=-mod=vendor
 
 COPY go.mod go.sum ./

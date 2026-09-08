@@ -6,7 +6,7 @@ BUILD_DATE ?= unknown
 IMAGE_SOURCE ?= https://github.com/mail-de/doppelgaenger
 IMAGE_TAG ?= $(BINARY_NAME):$(VERSION)
 FAKE_IMAGE_TAG ?= $(FAKE_BINARY_NAME):$(VERSION)
-GO_IMAGE ?= golang:1.26.5-alpine3.23
+GO_IMAGE ?= golang:1.27.1-alpine3.23
 CERTS_IMAGE ?= alpine:3.23
 RUNTIME_IMAGE ?= scratch
 DOCKER ?= docker
@@ -20,7 +20,7 @@ GOFLAGS := -mod=vendor
 LDFLAGS := -ldflags "-s -w -buildid= -X main.version=$(VERSION)"
 SYFT_VERSION ?= v1.16.0
 
-export GOENV := greenteagc
+export GOEXPERIMENT ?= runtimesecret
 
 .PHONY: all vet lint-config lint fix build build-check build-fake clean test race \
 	e2e-http e2e-milter e2e-grpc e2e-docker e2e \

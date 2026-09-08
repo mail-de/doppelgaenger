@@ -24,7 +24,7 @@ permissions:
 
 env:
   CERTS_IMAGE: alpine:3.23
-  GO_IMAGE: golang:1.26.5-alpine3.23
+  GO_IMAGE: golang:1.27.1-alpine3.23
   OCI_IMAGE_DESCRIPTION: Backend-neutral shadow proxy for HTTP, gRPC, and Milter traffic
 
 concurrency:
