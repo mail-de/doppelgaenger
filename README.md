@@ -85,3 +85,12 @@ Christian Rößner <c.roessner@team.mail.de>
 ## License
 
 Doppelgaenger is licensed under the [MIT License](LICENSE).
+
+### gRPC caller authentication
+
+When `grpc_backend_oidc_auth.enabled` is true, configure `grpc_caller_auth.mode`
+as `introspection` or `mtls` before upgrading. Missing authentication configuration
+fails startup. Caller validation precedes Primary token replacement and Shadow
+forwarding for every RPC, including streams. See the [caller authentication and
+migration guide](docs/operator/grpc.md#caller-authentication) for configuration,
+method scope policies, metrics, and the temporary explicit compatibility switch.

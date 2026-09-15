@@ -588,6 +588,8 @@ protocol: grpc
 shadow_sample_percent: 0
 primary_grpc_targets:
   - address: "primary.example.com:9443"
+grpc_caller_auth:
+  allow_unauthenticated: true
 grpc_backend_oidc_auth:
   enabled: true
   configuration_uri: " https://login.example.com/.well-known/openid-configuration "

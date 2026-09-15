@@ -2,7 +2,6 @@ package grpcproxy
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,10 +32,11 @@ type BearerTokenSource interface {
 }
 
 type clientCredentialsTokenSource struct {
-	cfg    config.GRPCBackendOIDCAuthConfig
-	client *http.Client
-	logger *slog.Logger
-	now    func() time.Time
+	cfg       config.GRPCBackendOIDCAuthConfig
+	client    *http.Client
+	initError error
+	logger    *slog.Logger
+	now       func() time.Time
 
 	mu        sync.Mutex
 	token     string
@@ -59,14 +59,28 @@ func newBearerTokenSource(cfg config.Config, logger *slog.Logger) BearerTokenSou
 		return nil
 	}
 
+	a := cfg.GRPCBackendOIDCAuth
+	tlsConfig, initError := config.AuthClientTLSConfig(a.CAFile, a.ServerName, a.MinTLSVersion)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if cfg.GRPCBackendOIDCAuth.InsecureTLS {
-		//nolint:gosec // Operator opt-in for local in-pod HTTPS endpoints with non-loopback certificates.
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	transport.TLSClientConfig = tlsConfig
+
+	if a.InsecureTLS {
+		if a.CAFile != "" || a.ServerName != "" {
+			initError = errors.New("grpc_backend_oidc_auth: insecure_tls cannot be combined with ca_file or server_name")
+		}
+
+		if tlsConfig != nil {
+			tlsConfig.InsecureSkipVerify = true
+		} // Explicit legacy opt-in.
+
+		if logger != nil {
+			logger.Warn("grpc_backend_oidc_auth.insecure_tls disables certificate and hostname verification; use ca_file and server_name")
+		}
 	}
 
 	return &clientCredentialsTokenSource{
-		cfg: cfg.GRPCBackendOIDCAuth,
+		cfg:       cfg.GRPCBackendOIDCAuth,
+		initError: initError,
 		client: &http.Client{
 			Transport: transport,
 		},
@@ -76,6 +90,10 @@ func newBearerTokenSource(cfg config.Config, logger *slog.Logger) BearerTokenSou
 }
 
 func (s *clientCredentialsTokenSource) Authorization(ctx context.Context) (string, error) {
+	if s.initError != nil {
+		return "", s.initError
+	}
+
 	token, err := s.accessToken(ctx)
 	if err != nil {
 		return "", err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,17 +23,19 @@ import (
 
 // Handler forwards unknown gRPC services to the selected primary target.
 type Handler struct {
-	cfg           config.Config
-	resolver      *Resolver
-	pools         *TargetPools
-	logger        *slog.Logger
-	shadowLimiter ratelimit.Limiter
-	observability *observability.Observability
-	callOptions   []grpc.CallOption
-	primaryBearer BearerTokenSource
-	requestID     atomic.Uint64
-	randMu        sync.Mutex
-	rng           *rand.Rand
+	cfg             config.Config
+	resolver        *Resolver
+	pools           *TargetPools
+	logger          *slog.Logger
+	shadowLimiter   ratelimit.Limiter
+	observability   *observability.Observability
+	callOptions     []grpc.CallOption
+	primaryBearer   BearerTokenSource
+	callerHTTP      *http.Client
+	callerHTTPError error
+	requestID       atomic.Uint64
+	randMu          sync.Mutex
+	rng             *rand.Rand
 }
 
 // NewHandler constructs the generic gRPC unknown-service handler.
@@ -44,16 +47,25 @@ func NewHandler(
 	shadowLimiter ratelimit.Limiter,
 	obs *observability.Observability,
 ) *Handler {
+	var callerHTTP *http.Client
+
+	var callerHTTPError error
+	if cfg.GRPCCallerAuth.Mode == callerIntrospectionMode {
+		callerHTTP, callerHTTPError = newCallerHTTPClient(cfg.GRPCCallerAuth)
+	}
+
 	return &Handler{
-		cfg:           cfg,
-		resolver:      resolver,
-		pools:         pools,
-		logger:        logger,
-		shadowLimiter: shadowLimiter,
-		observability: obs,
-		callOptions:   defaultCallOptions(cfg),
-		primaryBearer: newBearerTokenSource(cfg, logger),
-		rng:           rand.New(rand.NewSource(time.Now().UnixNano())),
+		callerHTTP:      callerHTTP,
+		callerHTTPError: callerHTTPError,
+		cfg:             cfg,
+		resolver:        resolver,
+		pools:           pools,
+		logger:          logger,
+		shadowLimiter:   shadowLimiter,
+		observability:   obs,
+		callOptions:     defaultCallOptions(cfg),
+		primaryBearer:   newBearerTokenSource(cfg, logger),
+		rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -66,6 +78,10 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 
 	rpcCtx, requestCtx, finishObservation := h.prepareRPCContext(stream, fullMethod)
 	defer finishObservation()
+
+	if err := h.authenticateCaller(requestCtx, fullMethod); err != nil {
+		return h.rejectCaller(rpcCtx, err)
+	}
 
 	wrappedStream := wrappedServerStream{ServerStream: stream, ctx: requestCtx}
 

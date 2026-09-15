@@ -112,3 +112,34 @@ This is not an in-memory partial reload. Connections and protocol sessions are
 not preserved by the re-exec. The bundled systemd unit deliberately maps
 `systemctl reload` to an asynchronous service restart instead; see
 [Deployment](deployment.md).
+
+For inbound gRPC caller authentication, see [Caller authentication](grpc.md#caller-authentication). Backend OIDC now requires an explicit caller mode or the temporary migration switch.
+
+### TLS for gRPC authentication HTTP clients
+
+Both `grpc_caller_auth` (introspection) and `grpc_backend_oidc_auth` (discovery
+and token acquisition) accept these independent settings:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ca_file` | empty | Readable PEM CA bundle replacing system roots. Empty uses system roots. |
+| `server_name` | empty | Certificate DNS name and SNI override; empty uses the URL hostname. |
+| `min_tls_version` | `1.2` | `1.2` / `TLS1.2` or `1.3` / `TLS1.3`. |
+
+For example, add the following to each authentication block when connecting to
+`https://127.0.0.1:9443` with a certificate for `login.example.net`:
+
+```yaml
+ca_file: "" # Or /etc/doppelgaenger/certs/issuer-ca.pem for a private CA.
+server_name: login.example.net
+min_tls_version: "1.2"
+```
+
+The URL still determines the connection address and HTTP Host. The TLS name does
+not change the expected `issuer` claim. An invalid CA bundle or unsupported TLS
+version rejects configuration loading. Mount CA files read-only and restart after
+updates. Caller introspection always verifies certificates. Backend OIDC retains
+`insecure_tls` only for legacy testing, emits a warning when enabled, and rejects
+combining it with `ca_file` or `server_name`. Remove `insecure_tls: true` when
+migrating to verified TLS. See [gRPC](grpc.md#caller-authentication) for a complete
+caller policy example.

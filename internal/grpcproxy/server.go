@@ -159,6 +159,18 @@ func detachServerState(srv *Server) (net.Listener, *grpc.Server, *TargetPools) {
 }
 
 func newGRPCServer(cfg config.Config, handler *Handler) (*grpc.Server, error) {
+	if err := config.ValidateGRPCCallerAuth(cfg); err != nil {
+		return nil, err
+	}
+
+	if handler.callerHTTPError != nil {
+		return nil, handler.callerHTTPError
+	}
+
+	if cfg.GRPCCallerAuth.AllowUnauthenticated && handler.logger != nil {
+		handler.logger.Warn("grpc caller authentication disabled: reachable callers can use backend service privileges")
+	}
+
 	options := []grpc.ServerOption{
 		grpc.ForceServerCodec(rawCodec{}),
 		grpc.UnknownServiceHandler(handler.Handle),

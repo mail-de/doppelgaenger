@@ -25,6 +25,7 @@ const (
 	protocolHTTP   = "http"
 	protocolMilter = "milter"
 	protocolGRPC   = "grpc"
+	grpcHTTPScheme = "https"
 
 	compareModeHeader = "header"
 	compareModeJSON   = "json"
@@ -214,8 +215,11 @@ type Config struct {
 	// Applies to: gRPC protocol.
 	GRPCRules []GRPCRule `mapstructure:"grpc_rules"`
 
-	// GRPCBackendOIDCAuth configures service-to-service OIDC authorization for primary gRPC upstream calls.
+	// GRPCCallerAuth verifies inbound callers before backend credentials are used.
 	// Applies to: gRPC protocol.
+	GRPCCallerAuth GRPCCallerAuthConfig `mapstructure:"grpc_caller_auth"`
+
+	// GRPCBackendOIDCAuth configures service-to-service OIDC authorization for primary gRPC upstream calls.
 	GRPCBackendOIDCAuth GRPCBackendOIDCAuthConfig `mapstructure:"grpc_backend_oidc_auth"`
 
 	// TLSCertFile path to the HTTP listener TLS certificate file.
@@ -332,6 +336,9 @@ type GRPCTLSConfig struct {
 
 // GRPCBackendOIDCAuthConfig configures client-credentials Bearer tokens for primary gRPC backend calls.
 type GRPCBackendOIDCAuthConfig struct {
+	CAFile           string        `mapstructure:"ca_file"`
+	ServerName       string        `mapstructure:"server_name"`
+	MinTLSVersion    string        `mapstructure:"min_tls_version"`
 	Enabled          bool          `mapstructure:"enabled"`
 	ConfigurationURI string        `mapstructure:"configuration_uri"`
 	TokenEndpoint    string        `mapstructure:"token_endpoint"`
@@ -516,6 +523,9 @@ func setGRPCDefaults(v *viper.Viper) {
 	v.SetDefault("grpc_compare_mode", grpcCompareModeStatus)
 	v.SetDefault("grpc_compare_metadata", []string{grpcMetadataStatus, grpcMetadataMessage})
 	v.SetDefault("grpc_rules", []GRPCRule{})
+	v.SetDefault("grpc_caller_auth.mode", "")
+	v.SetDefault("grpc_caller_auth.allow_unauthenticated", false)
+	v.SetDefault("grpc_caller_auth.timeout", 5*time.Second)
 	v.SetDefault("grpc_backend_oidc_auth.enabled", false)
 	v.SetDefault("grpc_backend_oidc_auth.auth_method", grpcOIDCAuthMethodAuto)
 	v.SetDefault("grpc_backend_oidc_auth.timeout", 5*time.Second)
@@ -745,7 +755,22 @@ func normalizeGRPCConfig(cfg *Config) error {
 		return err
 	}
 
-	return normalizeGRPCBackendOIDCAuthConfig(cfg)
+	if err := normalizeGRPCBackendOIDCAuthConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := ValidateGRPCCallerAuth(*cfg); err != nil {
+		return err
+	}
+
+	if cfg.GRPCCallerAuth.Mode == grpcCallerIntrospectionMode {
+		a := cfg.GRPCCallerAuth
+		_, err := AuthClientTLSConfig(a.CAFile, a.ServerName, a.MinTLSVersion)
+
+		return err
+	}
+
+	return nil
 }
 
 func normalizeGRPCListenerAndTLS(cfg *Config) error {
@@ -827,6 +852,14 @@ func normalizeGRPCBackendOIDCAuthConfig(cfg *Config) error {
 		return nil
 	}
 
+	if _, err := AuthClientTLSConfig(token.CAFile, token.ServerName, token.MinTLSVersion); err != nil {
+		return err
+	}
+
+	if token.InsecureTLS && (token.CAFile != "" || token.ServerName != "") {
+		return errors.New("grpc_backend_oidc_auth: insecure_tls cannot be combined with ca_file or server_name")
+	}
+
 	if err := validateGRPCBackendOIDCAuthEndpoints(token); err != nil {
 		return err
 	}
@@ -891,7 +924,7 @@ func validateGRPCBackendOIDCAuthURL(field string, value string) error {
 		return fmt.Errorf("grpc_backend_oidc_auth.%s must be an absolute URL: %q", field, value)
 	}
 
-	if parsed.Scheme != "https" && parsed.Scheme != protocolHTTP {
+	if parsed.Scheme != grpcHTTPScheme && parsed.Scheme != protocolHTTP {
 		return fmt.Errorf("grpc_backend_oidc_auth.%s has unsupported scheme %q", field, parsed.Scheme)
 	}
 

@@ -35,6 +35,25 @@ primary_grpc_targets: []
 #       # client_key: "/certs/grpc-client.key"
 primary_grpc_selection_mode: "round_robin"
 
+# Caller authentication is mandatory when backend OIDC is enabled.
+# Choose introspection (below) or mtls with grpc_tls client_ca + require_client_cert.
+grpc_caller_auth:
+  mode: "" # Set to "introspection" or "mtls" when backend OIDC is enabled.
+  allow_unauthenticated: false # Migration only: true restores service-identity access with a warning.
+  ca_file: "" # Empty uses system roots; otherwise a mounted PEM CA bundle.
+  server_name: "" # Certificate DNS name for HTTPS over loopback.
+  min_tls_version: "1.2"
+  # introspection_endpoint: "https://login.example.net/oauth2/introspect"
+  # issuer: "https://login.example.net"
+  # audience: "proxy-api"
+  # client_id: "proxy-introspection"
+  # client_secret_env: "DOPPELGAENGER_INTROSPECTION_SECRET"
+  required_scopes: []
+  # method_scopes:
+  #   - method: "/example.Identity/Lookup"
+  #     scopes: ["identity:lookup"]
+  timeout: "5s"
+
 # grpc_backend_oidc_auth: optional client-credentials Bearer token source for
 # primary gRPC upstream calls.
 grpc_backend_oidc_auth:
@@ -47,7 +66,10 @@ grpc_backend_oidc_auth:
   scopes: []
   timeout: "5s"
   refresh_skew: "30s"
-  insecure_tls: false
+  ca_file: ""
+  server_name: ""
+  min_tls_version: "1.2"
+  insecure_tls: false # Legacy testing only; disables certificate and hostname verification.
 
 shadow_grpc_targets: []
 # Example:
