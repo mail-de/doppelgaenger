@@ -391,6 +391,8 @@ run_as_group: ""
 chroot: ""
 
 # Logging Settings
+# Minimum severity: debug, info, notice, warn, error, or none (disable logs).
+log_level: info
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
 # Applies to: HTTP protocol.

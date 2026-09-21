@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 )
 
 const runtimeSecurityAppliedEnv = "DOPPELGAENGER_RUNTIME_SECURITY_APPLIED"
@@ -26,7 +28,7 @@ func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	if os.Getenv(runtimeSecurityAppliedEnv) == "1" {
-		logger.Info("runtime security already applied, skipping re-application")
+		logger.Log(context.Background(), logging.LevelNotice, "runtime security already applied, skipping re-application")
 
 		return nil
 	}
@@ -41,7 +43,7 @@ func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 			return err
 		}
 
-		logger.Info("chroot applied", "path", cfg.ChrootDir)
+		logger.Log(context.Background(), logging.LevelNotice, "chroot applied", "path", cfg.ChrootDir)
 	}
 
 	if err := applyResolvedIdentities(uid, gid, groups); err != nil {
@@ -52,7 +54,7 @@ func ApplyRuntimeSecurity(cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("set runtime security marker env: %w", err)
 	}
 
-	logger.Info("runtime security applied", "run_as_user", cfg.RunAsUser, "run_as_group", cfg.RunAsGroup, "supplementary_groups_count", len(groups), "chroot", cfg.ChrootDir != "")
+	logger.Log(context.Background(), logging.LevelNotice, "runtime security applied", "run_as_user", cfg.RunAsUser, "run_as_group", cfg.RunAsGroup, "supplementary_groups_count", len(groups), "chroot", cfg.ChrootDir != "")
 
 	return nil
 }

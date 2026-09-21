@@ -24,6 +24,7 @@ import (
 	"doppelgaenger/internal/compare"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/headers"
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/mapping"
 	"doppelgaenger/internal/observability"
 	"doppelgaenger/internal/pathrules"
@@ -689,7 +690,12 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		return
 	}
 
-	h.logger.Info("auth_proxy",
+	level := logging.ResultLevel(hasDiff, payload.shadowErr != "" || payload.shadowRes.Err != nil || payload.compareErr != nil, payload.primaryRes.Err != nil)
+	if !h.logger.Enabled(payload.ctx, level) {
+		return
+	}
+
+	h.logger.Log(payload.ctx, level, "auth_proxy",
 		"req_id", payload.reqID,
 		"trace_id", payload.traceID,
 		"x_request_id", payload.corrID,

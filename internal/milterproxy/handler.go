@@ -16,6 +16,7 @@ import (
 	"go.uber.org/fx"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/observability"
 	"doppelgaenger/internal/protocol"
 	"doppelgaenger/internal/ratelimit"
@@ -238,7 +239,12 @@ func (h *Handler) logFrameResult(
 		h.observability.ObserveComparison(frameCtx, protocolMilter, milterComparisonMetricResult(shadowEnabled, result))
 	}
 
-	h.logger.Info("milter_proxy",
+	level := logging.ResultLevel(result.Compare.Diff, result.ShadowErr != "" || result.CompareErr != nil, result.Primary.Err != nil)
+	if !h.logger.Enabled(frameCtx, level) {
+		return
+	}
+
+	h.logger.Log(frameCtx, level, "milter_proxy",
 		"req_id", reqID,
 		"trace_id", traceID,
 		milterMetaCommand, command,

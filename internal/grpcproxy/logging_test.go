@@ -1,11 +1,15 @@
 package grpcproxy
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 )
 
 func TestLogRPCResultLogOnlyOnDiffSuppressesCleanComparison(t *testing.T) {
@@ -59,4 +63,16 @@ func TestLogRPCResultLogOnlyOnDiffKeepsDiff(t *testing.T) {
 	assertLogField(t, record, "msg", "grpc_proxy")
 	assertLogField(t, record, "diff", "true")
 	assertLogField(t, record, "compare_outcome", grpcCompareOutcomeDiff)
+}
+
+func TestRPCResultErrorSeverity(t *testing.T) {
+	var output bytes.Buffer
+
+	handler := &Handler{logger: slog.New(logging.NewHandler(&output, false, "error"))}
+	handler.logRPCResult(&grpcRPCContext{}, testFullMethodUnary, Decision{}, nil,
+		grpcShadowPolicyDecision{}, grpcStreamResult{Err: "transport failed"}, grpcStreamResult{}, grpcCompareResult{})
+
+	if !strings.Contains(output.String(), "level=ERROR") {
+		t.Fatalf("primary error missing: %s", output.String())
+	}
 }

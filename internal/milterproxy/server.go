@@ -13,6 +13,7 @@ import (
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/health"
+	"doppelgaenger/internal/logging"
 )
 
 const protocolMilter = "milter"
@@ -91,8 +92,8 @@ func startMilterServer(
 }
 
 func startMilterListener(srv *Server, logger *slog.Logger, version app.Version, protocolName string) (net.Listener, error) {
-	logger.Info("milterproxy starting", "version", string(version))
-	logger.Info("listening", "addr", srv.Addr, "protocol", protocolName)
+	logger.Log(context.Background(), logging.LevelNotice, "milterproxy starting", "version", string(version))
+	logger.Log(context.Background(), logging.LevelNotice, "listening", "addr", srv.Addr, "protocol", protocolName)
 
 	listener, activated, err := resolveMilterListener(srv.Addr)
 	if err != nil {
@@ -105,7 +106,7 @@ func startMilterListener(srv *Server, logger *slog.Logger, version app.Version, 
 			return nil, err
 		}
 	} else {
-		logger.Info("socket activation enabled", "protocol", protocolMilter)
+		logger.Log(context.Background(), logging.LevelNotice, "socket activation enabled", "protocol", protocolMilter)
 	}
 
 	srv.mu.Lock()

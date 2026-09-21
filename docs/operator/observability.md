@@ -130,3 +130,23 @@ comparison outcome; Milter logs expose terminal decisions and raw differences.
 Startup, reload, listener, and failure messages are separate lifecycle logs.
 Build alerts on explicit fields and metric labels rather than matching free-form
 message text where a structured event exists.
+
+## Log severity
+
+Set `log_level: warn` in the YAML configuration for high-traffic deployments.
+The default is `info`; accepted levels, in order, are `debug`, `info`, `notice`,
+`warn`, and `error`. `none` disables all application logger output. Level names
+are case-insensitive; invalid values reject configuration loading. Restart the
+process or use the existing Unix SIGHUP re-exec reload to apply changes.
+
+Clean request results use `info`. Comparison differences use `notice`; Shadow
+and comparison failures use `warn`, and primary transport failures use `error`.
+Startup, listener, runtime security, and reload events use `notice`. Existing
+warning and error events keep their severities. `notice` is rendered as `NOTICE`
+in both JSON and text output. A threshold includes all higher severities.
+
+`log_only_on_diff` additionally filters HTTP and gRPC result events; it cannot
+override the severity threshold. Metrics and traces remain active independently
+of logging, including at `none`. CLI diagnostics and third-party output that
+bypasses the application logger are outside this setting. The standalone test
+servers retain their own logging configuration.

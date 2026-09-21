@@ -2,13 +2,13 @@ package app
 
 import (
 	"crypto/tls"
-	"io"
 	"log/slog"
 	"os"
 
 	"go.uber.org/fx"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/ratelimit"
 	"doppelgaenger/internal/tlsutil"
 )
@@ -18,19 +18,10 @@ type Version string
 
 // NewLogger builds the structured logger and sets it as default.
 func NewLogger(cfg config.Config) *slog.Logger {
-	logger := slog.New(newHandler(os.Stdout, cfg.UseJSONLogger()))
+	logger := slog.New(logging.NewHandler(os.Stdout, cfg.UseJSONLogger(), cfg.LogLevel))
 	slog.SetDefault(logger)
 
 	return logger
-}
-
-func newHandler(writer io.Writer, useJSON bool) slog.Handler {
-	options := &slog.HandlerOptions{Level: slog.LevelInfo}
-	if useJSON {
-		return slog.NewJSONHandler(writer, options)
-	}
-
-	return slog.NewTextHandler(writer, options)
 }
 
 // UpstreamTLSOut provides TLS configs for primary and shadow backends.

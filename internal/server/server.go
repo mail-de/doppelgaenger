@@ -17,6 +17,7 @@ import (
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/health"
+	"doppelgaenger/internal/logging"
 )
 
 const protocolHTTP = "http"
@@ -94,9 +95,9 @@ func startServer(
 		return err
 	}
 
-	logger.Info("doppelgaenger starting", "version", string(version))
-	logger.Info("listening", "addr", listenAddr, "proto", proto)
-	logger.Info("backends", "primary", stringifyURLs(cfg.PrimaryBaseURLs), "shadow", stringifyURLs(cfg.ShadowBaseURLs))
+	logger.Log(context.Background(), logging.LevelNotice, "doppelgaenger starting", "version", string(version))
+	logger.Log(context.Background(), logging.LevelNotice, "listening", "addr", listenAddr, "proto", proto)
+	logger.Log(context.Background(), logging.LevelNotice, "backends", "primary", stringifyURLs(cfg.PrimaryBaseURLs), "shadow", stringifyURLs(cfg.ShadowBaseURLs))
 	logUpstreamCA(cfg, logger)
 
 	listener, err := resolveHTTPListener(cfg, useTLS, logger)
@@ -116,7 +117,7 @@ func logUpstreamCA(cfg config.Config, logger *slog.Logger) {
 		return
 	}
 
-	logger.Info("upstream CA",
+	logger.Log(context.Background(), logging.LevelNotice, "upstream CA",
 		"root", cfg.RootCAPath,
 		"primary", cfg.PrimaryRootCA,
 		"shadow", cfg.ShadowRootCA,
@@ -134,7 +135,7 @@ func resolveHTTPListener(cfg config.Config, useTLS bool, logger *slog.Logger) (n
 		return listener, nil
 	}
 
-	logger.Info("socket activation enabled", "protocol", protocolHTTP)
+	logger.Log(context.Background(), logging.LevelNotice, "socket activation enabled", "protocol", protocolHTTP)
 
 	if !useTLS {
 		return listener, nil

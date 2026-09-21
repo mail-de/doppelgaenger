@@ -18,6 +18,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/mapping"
 )
 
@@ -288,6 +289,9 @@ type Config struct {
 	// LogOnlyOnDiff controls whether proxy result logs are emitted only for differences or comparison errors.
 	LogOnlyOnDiff bool `mapstructure:"log_only_on_diff"`
 
+	// LogLevel sets the minimum severity; none disables application logs.
+	LogLevel string `mapstructure:"log_level"`
+
 	// LogJSON controls whether the logger should output JSON.
 	LogJSON bool `mapstructure:"log_json"`
 
@@ -543,6 +547,7 @@ func setCompareDefaults(v *viper.Viper) {
 
 func setRuntimeDefaults(v *viper.Viper) {
 	v.SetDefault("log_json", true)
+	v.SetDefault("log_level", "info")
 	v.SetDefault("root_ca", "")
 	v.SetDefault("primary_root_ca", "")
 	v.SetDefault("shadow_root_ca", "")
@@ -614,6 +619,15 @@ func setObservabilityDefaults(v *viper.Viper) {
 }
 
 func validate(cfg *Config) error {
+	if _, err := logging.ParseLevel(cfg.LogLevel); err != nil {
+		return err
+	}
+
+	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	if cfg.LogLevel == "" {
+		cfg.LogLevel = "info"
+	}
+
 	if err := normalizeProtocol(cfg); err != nil {
 		return err
 	}

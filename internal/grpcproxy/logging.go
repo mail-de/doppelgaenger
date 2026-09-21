@@ -1,9 +1,12 @@
 package grpcproxy
 
 import (
+	"context"
 	"time"
 
 	"google.golang.org/grpc/codes"
+
+	"doppelgaenger/internal/logging"
 )
 
 func (h *Handler) logRPCResult(
@@ -24,12 +27,17 @@ func (h *Handler) logRPCResult(
 		return
 	}
 
+	level := logging.ResultLevel(compareResult.Diff, shadowResult.Err != "" || compareResult.Err != "", primaryResult.Err != "")
+	if !h.logger.Enabled(context.Background(), level) {
+		return
+	}
+
 	attrs := grpcBaseLogAttributes(rpcCtx, fullMethod, decision)
 	attrs = append(attrs, grpcShadowDecisionLogAttributes(shadowDecision, shadowResult, decision)...)
 	attrs = append(attrs, grpcPrimaryLogAttributes(primaryTarget, primaryResult)...)
 	attrs = append(attrs, grpcShadowResultLogAttributes(shadowResult)...)
 	attrs = append(attrs, grpcCompareLogAttributes(compareResult)...)
-	h.logger.Info("grpc_proxy", attrs...)
+	h.logger.Log(context.Background(), level, "grpc_proxy", attrs...)
 }
 
 func (h *Handler) shouldSuppressRPCLog(

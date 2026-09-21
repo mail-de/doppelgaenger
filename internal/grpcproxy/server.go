@@ -15,6 +15,7 @@ import (
 	"doppelgaenger/internal/app"
 	"doppelgaenger/internal/config"
 	"doppelgaenger/internal/health"
+	"doppelgaenger/internal/logging"
 )
 
 // Server owns the gRPC listener lifecycle.
@@ -81,8 +82,8 @@ func startServer(
 		return errors.New("grpc_listen_addr must not be empty")
 	}
 
-	logger.Info("grpcproxy starting", "version", string(version))
-	logger.Info("listening", "addr", srv.Addr, "protocol", ProtocolName)
+	logger.Log(context.Background(), logging.LevelNotice, "grpcproxy starting", "version", string(version))
+	logger.Log(context.Background(), logging.LevelNotice, "listening", "addr", srv.Addr, "protocol", ProtocolName)
 
 	listener, err := startListener(srv.Addr, logger)
 	if err != nil {
@@ -115,7 +116,7 @@ func startListener(addr string, logger *slog.Logger) (net.Listener, error) {
 	}
 
 	if activated {
-		logger.Info("socket activation enabled", "protocol", ProtocolName)
+		logger.Log(context.Background(), logging.LevelNotice, "socket activation enabled", "protocol", ProtocolName)
 
 		return listener, nil
 	}

@@ -13,6 +13,7 @@ import (
 	"go.uber.org/fx"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 )
 
 var execProcess = syscall.Exec
@@ -51,7 +52,7 @@ func RegisterReloadHook(lc fx.Lifecycle, logger *slog.Logger) {
 }
 
 func handleSIGHUP(logger *slog.Logger) {
-	logger.Info("reload requested", "signal", "SIGHUP")
+	logger.Log(context.Background(), logging.LevelNotice, "reload requested", "signal", "SIGHUP")
 
 	// Validate config before replacing the process image.
 	if _, err := config.Load(); err != nil {

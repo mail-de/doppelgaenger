@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"doppelgaenger/internal/logging"
 )
 
 func TestNewHandlerJSON(t *testing.T) {
 	var buf bytes.Buffer
 
-	logger := slog.New(newHandler(&buf, true))
+	logger := slog.New(logging.NewHandler(&buf, true, "info"))
 
 	logger.Info("hello", "key", "value")
 
@@ -32,7 +34,7 @@ func TestNewHandlerJSON(t *testing.T) {
 func TestNewHandlerText(t *testing.T) {
 	var buf bytes.Buffer
 
-	logger := slog.New(newHandler(&buf, false))
+	logger := slog.New(logging.NewHandler(&buf, false, "info"))
 
 	logger.Info("hello", "key", "value")
 
