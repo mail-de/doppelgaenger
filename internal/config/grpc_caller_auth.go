@@ -24,6 +24,28 @@ type GRPCCallerAuthConfig struct {
 	RequiredScopes        []string                 `mapstructure:"required_scopes"`
 	MethodScopes          []GRPCCallerMethodScopes `mapstructure:"method_scopes"`
 	Timeout               time.Duration            `mapstructure:"timeout"`
+	// IntrospectionCacheTTL bounds how long a positive introspection result is reused; zero disables caching.
+	IntrospectionCacheTTL time.Duration `mapstructure:"introspection_cache_ttl"`
+	// IntrospectionCacheMaxEntries bounds the number of cached token digests.
+	IntrospectionCacheMaxEntries int `mapstructure:"introspection_cache_max_entries"`
+	// IntrospectionMaxConcurrent bounds concurrent introspection requests; zero uses the default.
+	IntrospectionMaxConcurrent int `mapstructure:"introspection_max_concurrent"`
+}
+
+// DefaultGRPCIntrospectionMaxConcurrent applies when introspection_max_concurrent is zero.
+const DefaultGRPCIntrospectionMaxConcurrent = 64
+
+// MaxGRPCIntrospectionCacheEntries caps the positive cache at about 300 MiB,
+// assuming typical claims of at most 300 bytes per entry.
+const MaxGRPCIntrospectionCacheEntries = 1000000
+
+// EffectiveIntrospectionMaxConcurrent returns the concurrency limit after defaults.
+func (a GRPCCallerAuthConfig) EffectiveIntrospectionMaxConcurrent() int {
+	if a.IntrospectionMaxConcurrent <= 0 {
+		return DefaultGRPCIntrospectionMaxConcurrent
+	}
+
+	return a.IntrospectionMaxConcurrent
 }
 
 // GRPCCallerMethodScopes maps an exact, case-sensitive RPC path to its required scopes.
@@ -83,11 +105,35 @@ func validateGRPCIntrospection(a GRPCCallerAuthConfig) error {
 		return errors.New("grpc_caller_auth.timeout must not be negative")
 	}
 
+	if err := validateIntrospectionCache(a); err != nil {
+		return err
+	}
+
 	if err := validateCallerMethods(a.MethodScopes); err != nil {
 		return err
 	}
 
 	return validateCallerScopes(a.RequiredScopes)
+}
+
+func validateIntrospectionCache(a GRPCCallerAuthConfig) error {
+	if a.IntrospectionCacheTTL < 0 {
+		return errors.New("grpc_caller_auth.introspection_cache_ttl must not be negative")
+	}
+
+	if a.IntrospectionCacheMaxEntries < 0 || a.IntrospectionCacheMaxEntries > MaxGRPCIntrospectionCacheEntries {
+		return errors.New("grpc_caller_auth.introspection_cache_max_entries must be between 0 and 1000000")
+	}
+
+	if a.IntrospectionMaxConcurrent < 0 {
+		return errors.New("grpc_caller_auth.introspection_max_concurrent must not be negative")
+	}
+
+	if a.IntrospectionCacheTTL > 0 && a.IntrospectionCacheMaxEntries == 0 {
+		return errors.New("grpc_caller_auth.introspection_cache_max_entries must be positive when introspection_cache_ttl is enabled")
+	}
+
+	return nil
 }
 
 func validateCallerMethods(methods []GRPCCallerMethodScopes) error {

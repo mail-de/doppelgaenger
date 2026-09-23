@@ -33,6 +33,7 @@ type Handler struct {
 	primaryBearer   BearerTokenSource
 	callerHTTP      *http.Client
 	callerHTTPError error
+	callerAuth      callerAuthRuntime
 	requestID       atomic.Uint64
 	randMu          sync.Mutex
 	rng             *rand.Rand

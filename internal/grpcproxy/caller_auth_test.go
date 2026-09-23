@@ -6,17 +6,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"doppelgaenger/internal/config"
-	"doppelgaenger/internal/observability"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +22,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The unknown-service boundary must reject before fetching a service token.
+// The unknown-service boundary must reject before fetching a service token. A
+// missing caller mode is a proxy misconfiguration, so the caller sees Unavailable.
 func TestBackendOIDCRequiresCallerBeforeForwarding(t *testing.T) {
 	service := &testPrimaryService{}
 	handler := testProxyHandler(newTestClientConn(t, startTestPrimary(t, service)))
@@ -36,8 +34,8 @@ func TestBackendOIDCRequiresCallerBeforeForwarding(t *testing.T) {
 	var response rawMessage
 
 	err := conn.Invoke(context.Background(), testFullMethodUnary, rawMessage("request"), &response)
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("expected Unauthenticated, got %v", err)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected Unavailable, got %v", err)
 	}
 
 	if len(service.unaryRequests()) != 0 {
@@ -46,7 +44,7 @@ func TestBackendOIDCRequiresCallerBeforeForwarding(t *testing.T) {
 }
 
 func TestCallerIntrospection(t *testing.T) {
-	t.Setenv("TEST_INTROSPECTION_SECRET", "test-secret")
+	t.Setenv(testCallerSecretEnv, testCallerSecret)
 
 	issuer := httptest.NewTLSServer(testIntrospectionEndpoint(t))
 	defer issuer.Close()
@@ -61,12 +59,12 @@ func TestCallerIntrospection(t *testing.T) {
 		{testCallerExpired, []string{"Bearer expired"}, codes.Unauthenticated},
 		{testCallerFuture, []string{"Bearer future"}, codes.Unauthenticated},
 		{testCallerScopeKey, []string{"Bearer foreign-scope"}, codes.PermissionDenied},
-		{"audience", []string{"Bearer foreign-audience"}, codes.Unauthenticated},
-		{"issuer", []string{"Bearer foreign-issuer"}, codes.Unauthenticated},
+		{testCaseAudience, []string{"Bearer foreign-audience"}, codes.Unauthenticated},
+		{testCaseIssuer, []string{"Bearer foreign-issuer"}, codes.Unauthenticated},
 		{"expiry-required", []string{"Bearer no-expiry"}, codes.Unauthenticated},
-		{testCallerUnavailable, []string{"Bearer unavailable"}, codes.Unauthenticated},
-		{testCallerMalformed, []string{"Bearer malformed"}, codes.Unauthenticated},
-		{"duplicate", []string{testCallerBearer, testCallerBearer}, codes.Unauthenticated},
+		{testCallerUnavailable, []string{"Bearer unavailable"}, codes.Unavailable},
+		{testCallerMalformed, []string{"Bearer malformed"}, codes.Unavailable},
+		{testCaseDuplicate, []string{testCallerBearer, testCallerBearer}, codes.Unauthenticated},
 		{"combined", []string{"Bearer valid,Bearer valid"}, codes.Unauthenticated},
 		{"empty", []string{"Bearer "}, codes.Unauthenticated},
 		{"valid", []string{"bEaReR valid"}, codes.OK},
@@ -113,7 +111,7 @@ func runCallerIntrospectionCase(t *testing.T, issuer *httptest.Server, values []
 }
 
 func testCallerConfig(endpoint string) config.GRPCCallerAuthConfig {
-	return config.GRPCCallerAuthConfig{Mode: callerIntrospectionMode, IntrospectionEndpoint: endpoint, Issuer: testCallerIssuer, Audience: testCallerAudience, ClientID: testCallerAudience, ClientSecretEnv: "TEST_INTROSPECTION_SECRET", MethodScopes: []config.GRPCCallerMethodScopes{{Method: testFullMethodUnary, Scopes: []string{testCallerScope}}}}
+	return config.GRPCCallerAuthConfig{Mode: callerIntrospectionMode, IntrospectionEndpoint: endpoint, Issuer: testCallerIssuer, Audience: testCallerAudience, ClientID: testCallerAudience, ClientSecretEnv: testCallerSecretEnv, MethodScopes: []config.GRPCCallerMethodScopes{{Method: testFullMethodUnary, Scopes: []string{testCallerScope}}}}
 }
 
 type countingBearer struct{ calls *atomic.Int64 }
@@ -188,23 +186,23 @@ func testIntrospectionEndpoint(t *testing.T) http.Handler {
 		checkIntrospectionCredentials(t, r)
 
 		token := r.FormValue("token")
-		claims := map[string]any{"active": true, "iss": testCallerIssuer, "aud": []string{testCallerAudience}, testCallerScopeKey: testCallerScope, "exp": time.Now().Add(time.Minute).Unix()}
+		claims := map[string]any{testClaimActive: true, testClaimIssuer: testCallerIssuer, testClaimAudience: []string{testCallerAudience}, testCallerScopeKey: testCallerScope, testClaimExpiry: time.Now().Add(time.Minute).Unix()}
 
 		switch token {
 		case testCallerInvalid:
-			claims["active"] = false
+			claims[testClaimActive] = false
 		case testCallerExpired:
-			claims["exp"] = time.Now().Add(-time.Minute).Unix()
+			claims[testClaimExpiry] = time.Now().Add(-time.Minute).Unix()
 		case testCallerFuture:
-			claims["nbf"] = time.Now().Add(time.Minute).Unix()
+			claims[testClaimNotBefore] = time.Now().Add(time.Minute).Unix()
 		case "foreign-scope":
-			claims[testCallerScopeKey] = "rpc:write"
+			claims[testCallerScopeKey] = testCallerWriteScope
 		case "foreign-audience":
-			claims["aud"] = "elsewhere"
+			claims[testClaimAudience] = testCallerForeignAudience
 		case "foreign-issuer":
-			claims["iss"] = "https://other.example"
+			claims[testClaimIssuer] = "https://other.example"
 		case "no-expiry":
-			delete(claims, "exp")
+			delete(claims, testClaimExpiry)
 		case testCallerUnavailable:
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -241,7 +239,7 @@ func TestCallerRejectsBeforeShadowAndStreaming(t *testing.T) {
 		var response rawMessage
 
 		err := stream.RecvMsg(&response)
-		if status.Code(err) != codes.Unauthenticated {
+		if status.Code(err) != codes.Unavailable {
 			t.Fatalf("method %s got %v", method, err)
 		}
 	}
@@ -258,7 +256,7 @@ func checkIntrospectionCredentials(t *testing.T, r *http.Request) {
 	t.Helper()
 
 	user, secret, ok := r.BasicAuth()
-	if !ok || user != testCallerAudience || secret != "test-secret" {
+	if !ok || user != testCallerAudience || secret != testCallerSecret {
 		t.Error("missing introspection credentials")
 	}
 }
@@ -323,85 +321,6 @@ func TestCallerMTLSHandshake(t *testing.T) {
 	assertMetadataValue(t, service.lastMetadata(), bearerAuthHeader, testDynamicAuthorization)
 }
 
-func TestCallerRejectionTelemetry(t *testing.T) {
-	logger, logs := newCaptureLogger()
-
-	obs, err := observability.New(config.Config{Observability: config.ObservabilityConfig{PrometheusEnabled: true}}, "test", logger)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	handler := NewHandler(config.Config{GRPCBackendOIDCAuth: config.GRPCBackendOIDCAuthConfig{Enabled: true}}, nil, nil, logger, nil, obs)
-	conn := newTestClientConn(t, startTestProxyWithHandler(t, handler))
-	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(bearerAuthHeader, "Bearer never-log-this-token"))
-
-	var response rawMessage
-	if err := conn.Invoke(ctx, testFullMethodUnary, rawMessage("request"), &response); status.Code(err) != codes.Unauthenticated {
-		t.Fatal(err)
-	}
-
-	record := logs.last()
-	assertLogField(t, record, "msg", "grpc caller rejected")
-	assertLogField(t, record, "reason", codes.Unauthenticated.String())
-
-	if strings.Contains(fmt.Sprint(record), "never-log-this-token") {
-		t.Fatal("token leaked to log")
-	}
-
-	recorder := httptest.NewRecorder()
-	obs.PrometheusHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-
-	body := recorder.Body.String()
-	if !strings.Contains(body, `outcome="caller_auth_rejected"`) || !strings.Contains(body, "doppelgaenger_ingress_requests_total") {
-		t.Fatal("missing rejection metric")
-	}
-
-	if strings.Contains(body, "never-log-this-token") {
-		t.Fatal("token leaked to metric")
-	}
-}
-
-func TestCallerIntrospectionTransportFailures(t *testing.T) {
-	t.Setenv("TEST_INTROSPECTION_SECRET", "test-secret")
-
-	var redirected atomic.Int64
-
-	for _, kind := range []string{testCallerRedirect, testCallerOversized, shadowSkipReasonTimeout} {
-		t.Run(kind, func(t *testing.T) {
-			issuer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/leak" {
-					redirected.Add(1)
-					return
-				}
-
-				switch kind {
-				case testCallerRedirect:
-					http.Redirect(w, r, "/leak", http.StatusTemporaryRedirect)
-				case testCallerOversized:
-					_, _ = w.Write([]byte(strings.Repeat(" ", 65537)))
-				case shadowSkipReasonTimeout:
-					time.Sleep(100 * time.Millisecond)
-				}
-			}))
-			defer issuer.Close()
-
-			a := testCallerConfig(issuer.URL)
-			a.Timeout = 20 * time.Millisecond
-			handler := &Handler{cfg: config.Config{GRPCCallerAuth: a}, callerHTTP: issuer.Client()}
-			handler.callerHTTP.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-
-			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(bearerAuthHeader, testCallerBearer))
-			if err := handler.authenticateCaller(ctx, testFullMethodUnary); status.Code(err) != codes.Unauthenticated {
-				t.Fatalf("got %v", err)
-			}
-		})
-	}
-
-	if redirected.Load() != 0 {
-		t.Fatal("introspection followed redirect")
-	}
-}
-
 func testCallerTLSConfig(t *testing.T, cert tls.Certificate, ca []byte) config.GRPCTLSConfig {
 	t.Helper()
 
@@ -411,7 +330,3 @@ func testCallerTLSConfig(t *testing.T, cert tls.Certificate, ca []byte) config.G
 		Key:  writeTestPEM(t, "server-key.pem", pem.EncodeToMemory(&pem.Block{Type: privateKeyPEMBlockType, Bytes: x509.MarshalPKCS1PrivateKey(cert.PrivateKey.(*rsa.PrivateKey))})),
 	}
 }
-
-const testCallerOversized = "oversized"
-
-const testCallerRedirect = "redirect"

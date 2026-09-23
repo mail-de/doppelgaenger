@@ -55,6 +55,8 @@ registered.
 | `doppelgaenger_comparisons_total` | `protocol`, `result` |
 | `doppelgaenger_observability_startups_total` | `result` |
 | `doppelgaenger_observability_shutdowns_total` | `result` |
+| `doppelgaenger_grpc_caller_introspections_total` | `result` (`hit`, `miss`, `shared`, `error`, `canceled`) |
+| `doppelgaenger_grpc_caller_introspection_flights` | none (gauge) |
 
 The two duration series are histograms. `method` is an HTTP method, a full gRPC
 method, or a one-byte Milter command depending on `protocol`. Backend `target`
@@ -62,7 +64,9 @@ is `primary` or `shadow`, not a configured host name.
 
 Comparison results use `same`, `diff`, `error`, or `skipped`. Ingress outcomes
 include `ok`, `bad_request`, `primary_error`, `timeout`, and `error` where the
-protocol path can produce them.
+protocol path can produce them. gRPC caller authentication adds
+`caller_auth_rejected`, `caller_auth_unavailable`, and `caller_auth_canceled`; see
+[Caller authentication](grpc.md#caller-authentication).
 
 ## OpenTelemetry
 

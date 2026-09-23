@@ -181,17 +181,18 @@ content-type conventions without inheriting its insecure TLS option.
 | `client_secret_env` | empty | Required environment variable holding the introspection client's secret; HTTP Basic authentication. |
 | `required_scopes` | `[]` | All listed scopes required for every RPC. |
 | `method_scopes` | empty | List of `method` (exact `/service/method`) and `scopes` rules. If nonempty, unlisted methods are denied. Method scopes are added to global scopes. |
-| `timeout` | `5s` | Per-introspection timeout; zero uses `5s`, negative values are rejected. |
+| `timeout` | `2s` | Per-introspection timeout; zero uses `2s`, negative values are rejected. Together with `introspection_max_concurrent` it bounds how long an unresponsive issuer can block new tokens (see [Overload budget](#overload-budget)). |
+| `introspection_cache_ttl` | `30s` | Maximum reuse time for a positive introspection result; `0s` disables the cache, negative values are rejected. Revocation takes effect up to this long after the issuer revokes a token. |
+| `introspection_cache_max_entries` | `10000` | Upper bound on cached token digests, at most `1000000`; must be positive while the cache is enabled. Each entry takes at most about 300 bytes with typical claims (10,000 entries: about 3 MiB; the maximum: about 300 MiB). When full, a small random sample is evicted, expired entries first, then the entry expiring soonest. |
+| `introspection_max_concurrent` | `64` | Upper bound on introspection requests in progress; zero uses `64`, negative values are rejected. Also sizes the idle keep-alive pool. Requests beyond the limit fail with `Unavailable` (`overload`). |
 
 Introspection requires `active: true`, matching issuer/audience, and a future `exp`.
 A supplied future `nbf` is rejected. Missing `iss`, `aud`, or `exp` is rejected even
 though RFC 7662 permits optional response fields: configure the issuer to return
-these fields. Every RPC is introspected without a positive cache. Verification
-occurs once when a stream opens; existing streams are not revalidated mid-stream.
-Transport errors, malformed/oversized responses, missing secrets and issuer
-failures return `Unauthenticated`; scope or method denial returns `PermissionDenied`.
-Exactly one well-formed Bearer metadata value is accepted. No Primary token fetch,
-Primary RPC, or Shadow RPC starts for rejected callers.
+these fields. Verification occurs once when a stream opens; existing streams are
+not revalidated mid-stream. Exactly one well-formed Bearer metadata value is
+accepted. No Primary token fetch, Primary RPC, or Shadow RPC starts for rejected
+callers.
 
 Example (replace endpoint, issuer, audience and scopes with the issuer's policy):
 
@@ -214,7 +215,10 @@ grpc_caller_auth:
       scopes: [identity:lookup]
     - method: /example.Identity/List
       scopes: [identity:list]
-  timeout: 5s
+  timeout: 2s
+  introspection_cache_ttl: 30s # 0s disables caching; revocation lags by up to this value.
+  introspection_cache_max_entries: 10000
+  introspection_max_concurrent: 64
 ```
 
 For a pod-local endpoint, keep the loopback URL and set `server_name` to the
@@ -235,12 +239,127 @@ proxied methods and does not apply token scope rules. TLS handshake rejections
 happen before RPC metrics. Use TLS for Bearer ingress as well, unless another
 trusted transport boundary already provides confidentiality.
 
-RPC rejections emit `grpc caller rejected` with a bounded gRPC status reason and
-no token, claims, introspection body, or client secret. Existing ingress telemetry
-counts them as `doppelgaenger_ingress_requests_total{protocol="grpc",outcome="caller_auth_rejected"}`
-(and the equivalent OTel counter); no backend request metric is emitted.
+RPC rejections emit `grpc caller rejected` with the gRPC status as `reason`, the
+bounded `cause` from [Failure classification](#failure-classification), `http_status` for issuer status failures,
+and a fixed `detail` for technical failures. Logs never contain the token, claims,
+introspection body, or client secret. Caller faults log at `WARN`, technical
+failures at `WARN`, configuration failures at `ERROR`, and canceled callers at
+`INFO`. Technical causes (`transport`, `timeout`, `http_status`, `response`,
+`overload`, `config`) are logged at most once per 10 seconds per cause; the next
+record carries the number of suppressed records as `suppressed`. For `config`,
+each distinct fixed `detail` has its own interval, so one misconfiguration never
+hides another; the remaining causes share one interval per cause because their
+details may contain unbounded values such as connection ports. Existing ingress
+telemetry counts every rejection in
+`doppelgaenger_ingress_requests_total{protocol="grpc",outcome=...}` (and the
+equivalent OTel counter) with these outcomes:
+
+| `outcome` | gRPC status |
+| --- | --- |
+| `caller_auth_rejected` | `Unauthenticated`, `PermissionDenied` |
+| `caller_auth_unavailable` | `Unavailable` |
+| `caller_auth_canceled` | `Canceled`, `DeadlineExceeded` |
+
+The server span carries the same value as `doppelgaenger.caller_auth.cause`. No
+backend request metric is emitted for rejected callers.
+
+`doppelgaenger_grpc_caller_introspections_total{result=...}` counts token lookups:
+`hit` (cache), `miss` (own introspection completed), `shared` (joined another
+caller's introspection), `error` (technical failure or overload), and `canceled`.
+`doppelgaenger_grpc_caller_introspection_flights` shows introspection requests in
+progress. With tracing enabled, each request gets a `gRPC caller introspection`
+client span (with `doppelgaenger.caller_auth.cause` on failure); server spans carry
+`doppelgaenger.caller_auth.introspection` with the lookup result and link to the
+introspection span that answered them.
+
+### Failure classification
+
+A rejection caused by the caller is distinguished from a failure of the proxy or
+the issuer. Only the former returns `Unauthenticated` or `PermissionDenied`;
+technical failures return the retryable `Unavailable`, so callers do not treat a
+valid token as invalid while the issuer is overloaded.
+
+| Case | gRPC status | `cause` |
+| --- | --- | --- |
+| No `authorization` metadata | `Unauthenticated` | `missing_bearer` |
+| Duplicate, non-Bearer, malformed, or longer than 8 KiB | `Unauthenticated` | `malformed_bearer` |
+| mTLS mode without a verified client chain | `Unauthenticated` | `mtls` |
+| `active: false` | `Unauthenticated` | `inactive` |
+| Wrong `iss` or `aud`, `exp` reached, or future `nbf` | `Unauthenticated` | `claims` |
+| Method not listed in `method_scopes` | `PermissionDenied` | `method` |
+| Required scope missing | `PermissionDenied` | `scope` |
+| Connection or TLS failure | `Unavailable` | `transport` |
+| Introspection exceeded `timeout` | `Unavailable` | `timeout` |
+| HTTP 429, 5xx, redirect, 400 without a client error, or any other non-200 status not listed below | `Unavailable` | `http_status` |
+| Unparseable or oversized (> 64 KiB) response | `Unavailable` | `response` |
+| `introspection_max_concurrent` requests already in progress | `Unavailable` | `overload` |
+| Empty client secret, HTTP 400 with RFC 6749 `error` `invalid_client` or `unauthorized_client`, HTTP 401/403, invalid configuration or CA bundle | `Unavailable` | `config` |
+| Caller canceled while waiting | `Canceled` | `canceled` |
+| Caller deadline expired while waiting | `DeadlineExceeded` | `deadline` |
+
+Proxy misconfiguration returns `Unavailable` rather than `Internal`: the caller is
+not at fault, the RPC succeeds once the operator fixes the configuration, and the
+proxy reports other missing dependencies (Primary token, Primary target) the same
+way. These cases are logged at `ERROR` with `cause=config`; fix them instead of
+relying on caller retries. Callers retrying `Unavailable` add load to an already
+struggling issuer, so use bounded retries with backoff.
+
+A plain HTTP 400 is not treated as misconfiguration because token content chosen
+by the caller can trigger it.
+
+Only the Bearer value is length-limited (8 KiB). The inbound gRPC header list
+keeps the gRPC default limit (16 MiB): the proxy forwards arbitrary caller
+metadata to backends, so a lower fixed limit could break existing callers
+without warning.
+
+### Overload budget
+
+At most `introspection_max_concurrent` introspection requests run at once, and
+each is abandoned after `timeout`. If the issuer stops responding, the limit is
+reached within one `timeout`; until requests time out, RPCs with uncached tokens
+fail immediately with `Unavailable` (`overload`), while cached tokens and tokens
+already being introspected keep working. The worst-case lock-out for a new token
+is therefore about one `timeout`, and a hung issuer receives at most
+`introspection_max_concurrent / timeout` new requests per second (defaults:
+64 / 2s = 32/s). Lower `timeout` to shorten the lock-out; raise the limit only
+if the issuer can take the additional concurrent load.
+
+### Positive introspection cache
+
+Positive results are cached in memory to reduce issuer load:
+
+- Only responses with `active: true` and a valid issuer, audience, `exp`, and `nbf`
+  are cached. Inactive tokens, claim failures, and every technical failure are
+  never cached, so the next RPC introspects again.
+- The cache key is the SHA-256 digest of the token. Raw tokens are not retained
+  after the introspection request completes.
+- An entry lives for `min(introspection_cache_ttl, exp - now)`. `exp` and `nbf`
+  are checked again on every cache hit, and method/scope rules are evaluated for
+  every RPC against the cached claims.
+- Concurrent RPCs with the same uncached token share one introspection request
+  (also with the cache disabled). A caller that cancels while waiting receives
+  `Canceled` without aborting the shared request for the others; the request is
+  canceled once no caller waits for it anymore.
+- Negative results (`active: false`) are deliberately not cached. Token values
+  are chosen by unauthenticated callers, so negative entries would let anyone
+  fill the cache and evict valid entries; concurrent duplicates are already
+  collapsed, and `introspection_max_concurrent` bounds the issuer load an
+  invalid-token flood can cause.
+- Security trade-off: token revocation at the issuer takes effect after up to
+  `introspection_cache_ttl`. Lower the TTL, or set `0s`, when faster revocation
+  matters more than issuer load. Each proxy process has its own cache.
+- Upgrades enable the cache with the `30s` default. Set
+  `introspection_cache_ttl: 0s` to keep introspecting every RPC.
 
 ### Migration
+
+Upgrading enables the positive introspection cache with `introspection_cache_ttl:
+30s`: a token revoked at the issuer keeps working for up to 30 seconds. Set `0s`
+before upgrading if that delay is unacceptable. Issuer failures now return
+`Unavailable` instead of `Unauthenticated`; make sure callers retry `Unavailable`
+with bounded backoff. The default introspection `timeout` drops from `5s` to `2s`
+to shorten the [overload budget](#overload-budget); keep an explicit `timeout: 5s`
+if the issuer regularly needs longer.
 
 Update the deployed configuration and supply the introspection secret through a
 Kubernetes Secret before upgrading the image. The introspection client must be

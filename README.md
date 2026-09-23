@@ -94,3 +94,9 @@ fails startup. Caller validation precedes Primary token replacement and Shadow
 forwarding for every RPC, including streams. See the [caller authentication and
 migration guide](docs/operator/grpc.md#caller-authentication) for configuration,
 method scope policies, metrics, and the temporary explicit compatibility switch.
+
+Introspection mode now caches positive results for `30s` by default
+(`grpc_caller_auth.introspection_cache_ttl`), so a revoked token remains usable
+for up to that long; set `0s` to introspect every RPC. Introspection failures of
+the issuer now return retryable `Unavailable` instead of `Unauthenticated`, and the
+default introspection `timeout` drops from `5s` to `2s`.

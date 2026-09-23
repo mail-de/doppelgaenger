@@ -470,7 +470,8 @@ func (h *captureLogHandler) Enabled(context.Context, slog.Level) bool {
 
 func (h *captureLogHandler) Handle(_ context.Context, record slog.Record) error {
 	values := map[string]string{
-		"msg": record.Message,
+		"msg":   record.Message,
+		"level": record.Level.String(),
 	}
 	record.Attrs(func(attr slog.Attr) bool {
 		values[attr.Key] = fmt.Sprint(attr.Value.Any())

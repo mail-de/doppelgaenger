@@ -18,6 +18,9 @@ import (
 	"doppelgaenger/internal/observability"
 )
 
+// callerAuthCauseAttribute records the bounded caller authentication failure class on server spans.
+const callerAuthCauseAttribute = "doppelgaenger.caller_auth.cause"
+
 type grpcRPCContext struct {
 	reqID         uint64
 	traceID       string
@@ -27,8 +30,10 @@ type grpcRPCContext struct {
 	outcome       string
 	spanErr       error
 	primaryStatus codes.Code
-	shadowEnabled bool
-	shadowStarted bool
+	// callerAuthCause is the bounded caller authentication failure class, if any.
+	callerAuthCause string
+	shadowEnabled   bool
+	shadowStarted   bool
 }
 
 type wrappedServerStream struct {
@@ -86,6 +91,10 @@ func (h *Handler) startGRPCObservation(ctx context.Context, rpcCtx *grpcRPCConte
 			attribute.String(observability.LabelShadow, observability.BoolLabel(rpcCtx.shadowEnabled)),
 			attribute.String(observability.LabelShadowStarted, observability.BoolLabel(rpcCtx.shadowStarted)),
 		)
+
+		if rpcCtx.callerAuthCause != "" {
+			span.SetAttributes(attribute.String(callerAuthCauseAttribute, rpcCtx.callerAuthCause))
+		}
 
 		if rpcCtx.spanErr != nil || rpcCtx.primaryStatus != codes.OK {
 			description := rpcCtx.primaryStatus.String()

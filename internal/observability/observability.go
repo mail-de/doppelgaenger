@@ -135,21 +135,25 @@ type Observability struct {
 }
 
 type prometheusMetrics struct {
-	ingressRequests     *prometheus.CounterVec
-	ingressDuration     *prometheus.HistogramVec
-	backendRequests     *prometheus.CounterVec
-	backendDuration     *prometheus.HistogramVec
-	comparisons         *prometheus.CounterVec
-	observabilityStarts *prometheus.CounterVec
-	observabilityStops  *prometheus.CounterVec
+	ingressRequests      *prometheus.CounterVec
+	ingressDuration      *prometheus.HistogramVec
+	backendRequests      *prometheus.CounterVec
+	backendDuration      *prometheus.HistogramVec
+	comparisons          *prometheus.CounterVec
+	observabilityStarts  *prometheus.CounterVec
+	observabilityStops   *prometheus.CounterVec
+	callerIntrospections *prometheus.CounterVec
+	callerFlights        prometheus.Gauge
 }
 
 type otelMetricInstruments struct {
-	ingressRequests metric.Int64Counter
-	ingressDuration metric.Float64Histogram
-	backendRequests metric.Int64Counter
-	backendDuration metric.Float64Histogram
-	comparisons     metric.Int64Counter
+	ingressRequests      metric.Int64Counter
+	ingressDuration      metric.Float64Histogram
+	backendRequests      metric.Int64Counter
+	backendDuration      metric.Float64Histogram
+	comparisons          metric.Int64Counter
+	callerIntrospections metric.Int64Counter
+	callerFlights        metric.Int64UpDownCounter
 }
 
 type prometheusCounterDuration struct {
@@ -390,6 +394,14 @@ func (o *Observability) initializeOpenTelemetryInstruments() error {
 		return err
 	}
 
+	if instruments.callerIntrospections, err = o.meter.Int64Counter("doppelgaenger_grpc_caller_introspections"); err != nil {
+		return err
+	}
+
+	if instruments.callerFlights, err = o.meter.Int64UpDownCounter("doppelgaenger_grpc_caller_introspection_flights"); err != nil {
+		return err
+	}
+
 	o.otelMetrics = instruments
 
 	return nil
@@ -460,8 +472,23 @@ func newPrometheusMetrics(registry *prometheus.Registry, runtimeMetrics bool) *p
 		metrics.observabilityStarts,
 		metrics.observabilityStops,
 	)
+	registerCallerIntrospectionMetrics(registry, metrics)
 
 	return metrics
+}
+
+func registerCallerIntrospectionMetrics(registry *prometheus.Registry, metrics *prometheusMetrics) {
+	metrics.callerIntrospections = newCounterVec(
+		"doppelgaenger_grpc_caller_introspections_total",
+		"gRPC caller token lookups by result: hit, miss, shared, error, or canceled.",
+		LabelResult,
+	)
+	metrics.callerFlights = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "doppelgaenger_grpc_caller_introspection_flights",
+		Help: "gRPC caller introspection requests currently in progress.",
+	})
+
+	registry.MustRegister(metrics.callerIntrospections, metrics.callerFlights)
 }
 
 func newCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
@@ -902,6 +929,36 @@ func (o *Observability) ObserveComparison(ctx context.Context, protocol, result 
 			attribute.String(LabelProtocol, protocol),
 			attribute.String(LabelResult, result),
 		))
+	}
+}
+
+// ObserveCallerIntrospection records one gRPC caller token lookup result.
+func (o *Observability) ObserveCallerIntrospection(ctx context.Context, result string) {
+	if o == nil {
+		return
+	}
+
+	if o.metrics != nil {
+		o.metrics.callerIntrospections.WithLabelValues(result).Inc()
+	}
+
+	if o.otelMetrics != nil {
+		o.otelMetrics.callerIntrospections.Add(ctx, 1, metric.WithAttributes(attribute.String(LabelResult, result)))
+	}
+}
+
+// AddCallerIntrospectionFlights adjusts the number of introspection requests in progress.
+func (o *Observability) AddCallerIntrospectionFlights(ctx context.Context, delta int64) {
+	if o == nil {
+		return
+	}
+
+	if o.metrics != nil {
+		o.metrics.callerFlights.Add(float64(delta))
+	}
+
+	if o.otelMetrics != nil {
+		o.otelMetrics.callerFlights.Add(ctx, delta)
 	}
 }
 

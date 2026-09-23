@@ -89,7 +89,12 @@ grpc_caller_auth:
   # method_scopes:
   #   - method: "/example.Identity/Lookup"
   #     scopes: ["identity:lookup"]
-  timeout: "5s"
+  timeout: "2s" # Per introspection; with introspection_max_concurrent it bounds the overload window.
+  # Positive introspection results are reused for up to this TTL (bounded by the
+  # token's exp); revocation takes effect after up to this delay. "0s" disables it.
+  introspection_cache_ttl: "30s"
+  introspection_cache_max_entries: 10000
+  introspection_max_concurrent: 64 # Concurrent introspection requests; excess fails as Unavailable.
 
 # grpc_backend_oidc_auth: optional client-credentials Bearer token source for
 # primary gRPC upstream calls. Configure at least one of configuration_uri or
