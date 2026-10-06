@@ -19,8 +19,8 @@ grpc_shadow_force_metadata: ""
 grpc_rules: []
 ```
 
-At least one Primary target is always required. A Shadow target is required
-when the effective global settings or any rule can enable Shadow work.
+At least one Primary target is always required. An empty Shadow target list
+disables Shadow, regardless of sampling, force metadata, or `shadow: always`.
 
 ## Listener TLS and message limits
 

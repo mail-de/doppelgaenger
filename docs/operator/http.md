@@ -27,7 +27,7 @@ is zero.
 | `tls_cert_file` | empty | Inbound certificate. Must be paired with `tls_key_file`. |
 | `tls_key_file` | empty | Inbound private key. Must be paired with `tls_cert_file`. |
 | `primary_base_urls` | `https://127.0.0.1:9001` | Required Primary URL pool. |
-| `shadow_base_urls` | `https://127.0.0.1:9002` | Required Shadow URL pool. |
+| `shadow_base_urls` | `https://127.0.0.1:9002` | Shadow URL pool. Explicit `[]` disables Shadow, including forced and `always` traffic. |
 | `primary_selection_mode` | `round_robin` | `round_robin` or `source_ip_hash`. Unknown values currently normalize to `round_robin`. |
 | `shadow_selection_mode` | `round_robin` | `round_robin` or `source_ip_hash`. Unknown values currently normalize to `round_robin`. |
 

@@ -291,6 +291,11 @@ type grpcShadowPolicyDecision struct {
 func (h *Handler) shouldShadow(ctx context.Context, decision Decision) grpcShadowPolicyDecision {
 	forcedShadow := h.forcedShadow(ctx)
 
+	// An empty pool disables shadowing before policy evaluation or stream creation.
+	if h.pools == nil || h.pools.Shadow == nil || len(h.pools.Shadow.targets) == 0 {
+		return grpcShadowPolicyDecision{forced: forcedShadow, skipReason: shadowSkipReasonNoTargets}
+	}
+
 	if decision.ShadowMode == ShadowModeNever {
 		reason := decision.ShadowSkipReason
 		if reason == "" {
@@ -305,8 +310,6 @@ func (h *Handler) shouldShadow(ctx context.Context, decision Decision) grpcShado
 	switch decision.ShadowMode {
 	case ShadowModeAlways:
 		doShadow = true
-	case ShadowModeAuto, ShadowModeInherit:
-		doShadow = forcedShadow || h.sampleShadow()
 	default:
 		doShadow = forcedShadow || h.sampleShadow()
 	}

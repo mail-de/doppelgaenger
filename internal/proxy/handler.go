@@ -36,6 +36,7 @@ const (
 	protocolHTTP                = "http"
 	shadowNotStarted            = "shadow_not_started"
 	shadowSkipReasonRateLimited = "rate_limited"
+	shadowSkipReasonNoTargets   = "no_shadow_targets"
 	compareSkipReasonNoShadow   = "no_shadow"
 	headerSessionID             = "X-Session-ID"
 	headerLocation              = "Location"
@@ -377,6 +378,11 @@ func (h *Handler) resolvePathRule(request httpRequestContext) pathrules.Decision
 func (h *Handler) shouldShadow(c *gin.Context, pathDecision pathrules.Decision) shadowDecision {
 	forcedShadow := h.cfg.ShadowForceHeader != "" && c.Request.Header.Get(h.cfg.ShadowForceHeader) != ""
 
+	// No configured targets is an explicit pause, overriding all shadow policies.
+	if len(h.cfg.ShadowBaseURLs) == 0 {
+		return shadowDecision{forced: forcedShadow, skipReason: shadowSkipReasonNoTargets}
+	}
+
 	if pathDecision.ShadowMode == pathrules.ShadowModeNever {
 		reason := pathDecision.ShadowSkipReason
 		if reason == "" {
@@ -391,8 +397,6 @@ func (h *Handler) shouldShadow(c *gin.Context, pathDecision pathrules.Decision) 
 	switch pathDecision.ShadowMode {
 	case pathrules.ShadowModeAlways:
 		doShadow = true
-	case pathrules.ShadowModeAuto, pathrules.ShadowModeInherit:
-		doShadow = forcedShadow || h.sampleShadow()
 	default:
 		doShadow = forcedShadow || h.sampleShadow()
 	}

@@ -780,16 +780,30 @@ primary_grpc_targets: []
 `), "expected empty primary gRPC targets to fail config loading")
 }
 
-func TestLoadGRPCRejectsShadowCapableConfigWithoutShadowTargets(t *testing.T) {
-	expectLoadFailure(t, []byte(`
-protocol: grpc
-shadow_sample_percent: 0
+func TestLoadAllowsEmptyShadowLists(t *testing.T) {
+	for _, protocolName := range []string{"http", "grpc"} {
+		t.Run(protocolName, func(t *testing.T) {
+			loaded := loadTestConfig(t, []byte("protocol: "+protocolName+`
+primary_base_urls: ["http://primary.example.com"]
+shadow_base_urls: []
 primary_grpc_targets:
   - address: "primary.example.com:9443"
-grpc_rules:
-  - service: "pkg.Service"
+shadow_grpc_targets: []
+shadow_sample_percent: 100
+shadow_force_header: "X-Shadow"
+grpc_shadow_force_metadata: "x-shadow"
+path_rules:
+  - match: ".*"
     shadow: always
-`), "expected shadow-capable gRPC config without shadow targets to fail config loading")
+grpc_rules:
+  - service: "*"
+    shadow: always
+`))
+			if len(loaded.ShadowBaseURLs) != 0 || len(loaded.ShadowGRPCTargets) != 0 {
+				t.Fatal("expected explicit empty shadow lists to remain empty")
+			}
+		})
+	}
 }
 
 func TestLoadGRPCRejectsTLSValidationErrors(t *testing.T) {

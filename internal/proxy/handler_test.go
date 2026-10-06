@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -186,6 +187,7 @@ func TestShouldShadowNoRulesPreservesSamplingAndForceHeader(t *testing.T) {
 
 	h := &Handler{
 		cfg: config.Config{
+			ShadowBaseURLs:      []*url.URL{{Scheme: protocolHTTP, Host: testShadowTarget}},
 			ShadowForceHeader:   testShadowForceHeader,
 			ShadowSamplePercent: 0,
 		},
@@ -279,6 +281,7 @@ func TestShouldShadowAutoAllowsSamplingAndForceHeader(t *testing.T) {
 
 	h := &Handler{
 		cfg: config.Config{
+			ShadowBaseURLs:      []*url.URL{{Scheme: protocolHTTP, Host: testShadowTarget}},
 			ShadowForceHeader:   testShadowForceHeader,
 			ShadowSamplePercent: 100,
 		},
@@ -306,6 +309,7 @@ func TestShouldShadowAlwaysBypassesSamplingButRespectsLimiter(t *testing.T) {
 
 	h := &Handler{
 		cfg: config.Config{
+			ShadowBaseURLs:      []*url.URL{{Scheme: protocolHTTP, Host: testShadowTarget}},
 			ShadowSamplePercent: 0,
 		},
 		shadowLimiter: staticLimiter{allow: true},
@@ -577,6 +581,8 @@ type runtimeHarness struct {
 
 func newRuntimeHarness(t *testing.T, cfg config.Config, limiter ratelimit.Limiter) runtimeHarness {
 	t.Helper()
+
+	cfg.ShadowBaseURLs = []*url.URL{{Scheme: protocolHTTP, Host: testShadowTarget}}
 
 	if cfg.CompareMode == "" {
 		cfg.CompareMode = compare.ModeHeader
@@ -898,4 +904,33 @@ func cloneProtocolEvent(event protocol.Event) protocol.Event {
 	event.ShadowRequestHeaders = cloneStringMap(event.ShadowRequestHeaders)
 
 	return event
+}
+
+func TestEmptyShadowListKeepsHTTPPrimaryOnly(t *testing.T) {
+	for _, mode := range []string{"auto", "always"} {
+		t.Run(mode, func(t *testing.T) {
+			harness := newRuntimeHarness(t, config.Config{
+				ShadowSamplePercent: 100,
+				ShadowForceHeader:   testShadowForceHeader,
+				PathRules:           []config.PathRule{{Match: ".*", Shadow: mode}},
+			}, nil)
+			harness.handler.cfg.ShadowBaseURLs = nil
+			header := http.Header{}
+			header.Set(testShadowForceHeader, "1")
+
+			response := performRuntimeRequest(t, harness.handler, http.MethodGet, testAuthPath, header)
+			if response.Code != http.StatusOK {
+				t.Fatalf("expected primary success, got %d", response.Code)
+			}
+
+			record := waitForRuntimeLog(t, harness.logs)
+			if record["shadow_skip_reason"] != shadowSkipReasonNoTargets {
+				t.Fatalf("expected no_shadow_targets, got %#v", record)
+			}
+
+			if harness.adapter.shadowSendCount() != 0 {
+				t.Fatal("empty shadow list must not send shadow requests")
+			}
+		})
+	}
 }

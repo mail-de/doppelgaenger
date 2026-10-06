@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -96,6 +97,7 @@ func (s *asyncTestSession) Close() error {
 func newAsyncTestHandler(adapter protocol.Adapter, timeout time.Duration) *Handler {
 	return &Handler{
 		cfg: config.Config{
+			ShadowBaseURLs:         []*url.URL{{Scheme: protocolHTTP, Host: testShadowTarget}},
 			ShadowSamplePercent:    100,
 			ShadowTimeout:          timeout,
 			ForwardResponseHeaders: []string{testAuthStatus},

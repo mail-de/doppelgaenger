@@ -68,11 +68,18 @@ No. Generic gRPC mode has no descriptors and treats messages as bytes. It can
 compare final status, selected metadata, response-message count, or a hash of
 the response-message sequence.
 
-## Why does gRPC configuration require a Shadow target when sampling is zero?
+## Can Shadow be temporarily disabled without changing sampling or rules?
 
-It does so only when another effective path can enable Shadow, such as a force
-metadata key or a rule with `shadow: always`. Remove those paths or configure a
-Shadow target.
+Yes. Set `shadow_base_urls: []` for HTTP or `shadow_grpc_targets: []` for
+gRPC. An explicitly empty list keeps traffic Primary-only, even with 100%
+sampling, a force header or metadata key, or a matching `shadow: always` rule.
+Logs report `shadow_skip_reason=no_shadow_targets`. Primary targets remain
+required. Restore the Shadow list to resume the configured policy.
+
+Apply the configuration with a restart or Unix SIGHUP re-exec; neither preserves
+active connections. Omitting the HTTP list is different from setting `[]`:
+omission uses the default Shadow URL. Milter still uses
+`shadow_sample_percent: 0` to disable Shadow.
 
 ## Is the Milter implementation generic?
 

@@ -22,6 +22,7 @@ const defaultShadowQueueSize = 128
 
 const (
 	shadowSkipReasonRateLimited       = "rate_limited"
+	shadowSkipReasonNoTargets         = "no_shadow_targets"
 	shadowSkipReasonQueueFull         = "queue_full"
 	shadowSkipReasonTimeout           = "timeout"
 	shadowSkipReasonNotStarted        = "shadow_not_started"

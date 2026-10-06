@@ -106,7 +106,7 @@ func TestShadowTargetMissingKeepsPrimaryResponseAndLogsReason(t *testing.T) {
 	}
 
 	assertRawMessage(t, response, "primary:request")
-	assertLogField(t, logs.last(), "shadow_skip_reason", shadowSkipReasonTargetUnavailable)
+	assertLogField(t, logs.last(), "shadow_skip_reason", shadowSkipReasonNoTargets)
 	assertLogField(t, logs.last(), "shadow_started", "false")
 }
 
@@ -270,7 +270,7 @@ func TestNoShadowLogsCompareSkipped(t *testing.T) {
 
 	record := logs.last()
 	assertLogField(t, record, "compare_outcome", grpcCompareOutcomeSkipped)
-	assertLogField(t, record, "compare_skip_reason", grpcCompareSkipReasonNoShadow)
+	assertLogField(t, record, "compare_skip_reason", shadowSkipReasonNoTargets)
 	assertLogField(t, record, "shadow_started", "false")
 }
 
@@ -371,7 +371,7 @@ func TestShadowBidirectionalStreamingReceivesRequestMessages(t *testing.T) {
 }
 
 func testShadowDecisionHandler(cfg config.Config, limiter interface{ Allow() bool }) *Handler {
-	return NewHandler(cfg, &Resolver{}, nil, discardLogger(), limiter, nil)
+	return NewHandler(cfg, &Resolver{}, &TargetPools{Shadow: &TargetPool{targets: []*Target{{Name: "decision-test-shadow"}}}}, discardLogger(), limiter, nil)
 }
 
 func testShadowConfig(samplePercent int) config.Config {
@@ -532,5 +532,20 @@ func assertLogFieldContains(t *testing.T, record map[string]string, key string, 
 
 	if actual := record[key]; !strings.Contains(actual, expected) {
 		t.Fatalf("expected log field %s to contain %q, got %q in %#v", key, expected, actual, record)
+	}
+}
+
+func TestEmptyShadowPoolOverridesGRPCPolicy(t *testing.T) {
+	for _, mode := range []ShadowMode{ShadowModeAuto, ShadowModeAlways} {
+		handler := NewHandler(config.Config{
+			ShadowSamplePercent:     100,
+			GRPCShadowForceMetadata: testShadowForceMetadata,
+		}, &Resolver{}, &TargetPools{Shadow: &TargetPool{}}, discardLogger(), nil, nil)
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(testShadowForceMetadata, "yes"))
+
+		decision := handler.shouldShadow(ctx, Decision{ShadowMode: mode})
+		if decision.doShadow || decision.skipReason != shadowSkipReasonNoTargets || !decision.forced {
+			t.Fatalf("expected primary-only decision for empty pool, got %#v", decision)
+		}
 	}
 }

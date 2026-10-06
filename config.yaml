@@ -119,6 +119,7 @@ grpc_backend_oidc_auth:
 
 # shadow_grpc_targets: list of shadow gRPC backends.
 # Applies to: gRPC protocol.
+# Empty disables all Shadow traffic, including force metadata and always rules.
 shadow_grpc_targets: []
 # Example:
 # shadow_grpc_targets:
@@ -151,6 +152,7 @@ primary_base_urls:
 primary_selection_mode: "round_robin"
 
 # shadow_base_urls: list of shadow HTTP backends for load distribution.
+# Explicit [] disables all Shadow traffic, including force headers and always rules.
 # Applies to: HTTP protocol.
 shadow_base_urls:
   - "https://127.0.0.1:9002"

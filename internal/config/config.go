@@ -686,10 +686,6 @@ func validateBackendLists(cfg Config) error {
 		return errors.New("at least one primary backend must be configured via primary_base_urls")
 	}
 
-	if len(cfg.ShadowBaseURLs) == 0 {
-		return errors.New("at least one shadow backend must be configured via shadow_base_urls")
-	}
-
 	return nil
 }
 
@@ -994,10 +990,6 @@ func normalizeGRPCTargetAndRuleConfig(cfg *Config) error {
 
 	if err := normalizeGRPCRules(cfg); err != nil {
 		return err
-	}
-
-	if grpcShadowTargetsRequired(*cfg) && len(cfg.ShadowGRPCTargets) == 0 {
-		return errors.New("at least one shadow gRPC target must be configured when gRPC shadowing can be enabled")
 	}
 
 	return nil
@@ -1305,32 +1297,6 @@ func validateGRPCOverlayMetadataKey(key string) error {
 	}
 
 	return nil
-}
-
-func grpcShadowTargetsRequired(cfg Config) bool {
-	globalShadow := cfg.ShadowSamplePercent > 0 || cfg.GRPCShadowForceMetadata != ""
-	if len(cfg.GRPCRules) == 0 {
-		return globalShadow
-	}
-
-	required := false
-
-	for _, rule := range cfg.GRPCRules {
-		switch rule.Shadow {
-		case grpcRuleShadowAlways:
-			required = true
-		case grpcRuleShadowAuto, grpcRuleShadowInherit:
-			if globalShadow {
-				required = true
-			}
-		}
-
-		if rule.Service == "*" && len(rule.Methods) == 0 {
-			return required
-		}
-	}
-
-	return required
 }
 
 func normalizeCompareConfig(cfg *Config) {

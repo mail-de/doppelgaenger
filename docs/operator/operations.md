@@ -144,6 +144,7 @@ restart asynchronously; verify the replacement service and readiness.
 
 Restore the previous configuration and binary/image together, then repeat
 readiness and the protocol smoke. If the incident is isolated to Shadow, the
-narrowest containment is usually `shadow_sample_percent: 0` plus removal of
+simplest HTTP/gRPC containment is an explicitly empty Shadow target list.
+For sampling-based containment, use `shadow_sample_percent: 0` plus removal of
 force access or a rule with `shadow: never`. This keeps the Primary proxy path
 in place while stopping new Shadow work.

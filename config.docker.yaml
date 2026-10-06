@@ -76,6 +76,7 @@ grpc_backend_oidc_auth:
   min_tls_version: "1.2"
   insecure_tls: false # Legacy testing only; disables certificate and hostname verification.
 
+# Empty disables all Shadow traffic, including force metadata and always rules.
 shadow_grpc_targets: []
 # Example:
 # shadow_grpc_targets:
@@ -98,6 +99,7 @@ primary_base_urls:
 primary_selection_mode: "round_robin"
 
 # shadow_base_urls: list of shadow HTTP backends for load distribution.
+# Explicit [] disables all Shadow traffic, including force headers and always rules.
 shadow_base_urls:
   - "http://fakehttpserver-shadow:9002"
 
