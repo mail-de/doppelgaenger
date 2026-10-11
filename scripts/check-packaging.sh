@@ -37,8 +37,8 @@ if grep -Eq 'GOENV[[:space:]]*[:?]?=[[:space:]]*greenteagc' Makefile Dockerfile 
 fi
 
 for dockerfile in Dockerfile Dockerfile.faker; do
-	require_contains "$dockerfile" '^ARG GO_IMAGE=golang:1\.27\.1-alpine3\.23$' \
-		"$dockerfile must use the Go 1.27.1 Alpine builder"
+	require_contains "$dockerfile" '^ARG GO_IMAGE=golang:1\.27\.2-alpine3\.23$' \
+		"$dockerfile must use the Go 1.27.2 Alpine builder"
 	require_contains "$dockerfile" '^ARG CERTS_IMAGE=alpine:3\.23$' \
 		"$dockerfile must use an explicit certificate-stage image"
 	require_contains "$dockerfile" '^ARG RUNTIME_IMAGE=scratch$' \
@@ -94,7 +94,7 @@ if [[ "$guardrails_line" == *"docker-build"* || "$guardrails_line" == *"docker-s
 	fail "guardrails must stay host-independent and must not require Docker"
 fi
 
-grep -R "Go 1.27.1" README.md docs >/dev/null || \
+grep -R "Go 1.27.2" README.md docs >/dev/null || \
 	fail "documentation must state the current Go toolchain"
 
 printf 'check-packaging: hardened scratch image contracts are present\n'

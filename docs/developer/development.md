@@ -22,8 +22,9 @@ rules are:
 
 ## Toolchain
 
-The current build surfaces use Go 1.27.1 and `GOEXPERIMENT=runtimesecret`. Normal Makefile
-builds use `-mod=vendor`.
+The current build surfaces use Go 1.27.2 and `GOEXPERIMENT=runtimesecret`. Normal Makefile
+builds use `-mod=vendor`. Use golangci-lint 2.14.0 or later to read the Go 1.27.2
+export format; CI pins version 2.14.0.
 
 ```sh
 make build
