@@ -396,23 +396,27 @@ jobs:
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}-pkgs
 
-      - name: Select package asset
-        run: |
-          asset_name="$(find . -maxdepth 1 -type f -name '*.${{ matrix.pkg }}' -print -quit)"
-          asset_name="${asset_name#./}"
-          [[ -n "$asset_name" ]] || {
-            echo "No .${{ matrix.pkg }} package found" >&2
-            exit 1
-          }
-          echo "ASSET_NAME=${asset_name}" >> "$GITHUB_ENV"
-
-      - name: Upload package asset
+      - name: Upload package assets
         env:
           GH_TOKEN: ${{ github.token }}
+          PKG_EXTENSION: ${{ matrix.pkg }}
         run: |
+          assets=()
+          for asset_name in ./*."${PKG_EXTENSION}"; do
+            [[ -f "$asset_name" ]] || continue
+            for required in "$asset_name" "${asset_name}.sha256" "dist/sbom/${asset_name#./}.spdx.json"; do
+              [[ -f "$required" ]] || {
+                echo "Missing package asset: $required" >&2
+                exit 1
+              }
+              assets+=("$required")
+            done
+          done
+          [[ "${#assets[@]}" -gt 0 ]] || {
+            echo "No .${PKG_EXTENSION} package found" >&2
+            exit 1
+          }
           gh release upload "${GITHUB_REF_NAME}" \
-            --repo "${{ github.repository }}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --clobber \
-            "$ASSET_NAME" \
-            "${ASSET_NAME}.sha256" \
-            "dist/sbom/${ASSET_NAME}.spdx.json"
+            "${assets[@]}"
