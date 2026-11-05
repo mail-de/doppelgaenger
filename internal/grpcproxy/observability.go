@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/observability"
 )
 
@@ -22,6 +24,7 @@ import (
 const callerAuthCauseAttribute = "doppelgaenger.caller_auth.cause"
 
 type grpcRPCContext struct {
+	requestFields slog.Attr
 	reqID         uint64
 	traceID       string
 	remote        string
@@ -46,7 +49,9 @@ func (s wrappedServerStream) Context() context.Context {
 }
 
 func (h *Handler) newRPCContext(ctx context.Context, reqID uint64, fullMethod string, started time.Time) *grpcRPCContext {
+	incoming, _ := metadata.FromIncomingContext(ctx)
 	rpcCtx := &grpcRPCContext{
+		requestFields: logging.SelectedFields("request_metadata", h.cfg.LogFields.RequestMetadata, incoming.Get),
 		reqID:         reqID,
 		fullMethod:    fullMethod,
 		started:       started,

@@ -33,6 +33,11 @@ func (h *Handler) logRPCResult(
 	}
 
 	attrs := grpcBaseLogAttributes(rpcCtx, fullMethod, decision)
+	attrs = append(attrs, rpcCtx.requestFields,
+		logging.SelectedFields("primary_response_metadata", h.cfg.LogFields.ResponseMetadata, primaryResult.Header.Get),
+		logging.SelectedFields("shadow_response_metadata", h.cfg.LogFields.ResponseMetadata, shadowResult.Header.Get),
+		logging.SelectedFields("primary_trailer_metadata", h.cfg.LogFields.ResponseMetadata, primaryResult.Trailer.Get),
+		logging.SelectedFields("shadow_trailer_metadata", h.cfg.LogFields.ResponseMetadata, shadowResult.Trailer.Get))
 	attrs = append(attrs, grpcShadowDecisionLogAttributes(shadowDecision, shadowResult, decision)...)
 	attrs = append(attrs, grpcPrimaryLogAttributes(primaryTarget, primaryResult)...)
 	attrs = append(attrs, grpcShadowResultLogAttributes(shadowResult)...)

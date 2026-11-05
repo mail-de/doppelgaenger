@@ -400,6 +400,15 @@ chroot: ""
 # Logging Settings
 # Minimum severity: debug, info, notice, warn, error, or none (disable logs).
 log_level: info
+
+# Explicit field allowlists for correlation logs, independent of comparison.
+# Keys become lowercase with punctuation replaced by underscores.
+# Only select values intended for logs; do not include credentials.
+log_fields:
+  request_headers: []       # Example: [Auth-User, X-Client-ID]
+  response_headers: []      # Example: [X-Session-ID]
+  request_metadata: []      # gRPC example: [x-client-id]
+  response_metadata: []     # gRPC headers and trailers, e.g. [x-session-id]
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
 # Applies to: HTTP protocol.

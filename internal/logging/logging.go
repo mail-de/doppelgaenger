@@ -46,6 +46,10 @@ func NewHandler(writer io.Writer, useJSON bool, name string) slog.Handler {
 }
 
 func replaceLevel(groups []string, attr slog.Attr) slog.Attr {
+	if attr.Key == "trace_id" && attr.Value.Kind() == slog.KindString && attr.Value.String() == "" {
+		return slog.Attr{}
+	}
+
 	if len(groups) == 0 && attr.Key == slog.LevelKey && attr.Value.Any() == LevelNotice {
 		return slog.String(slog.LevelKey, "NOTICE")
 	}

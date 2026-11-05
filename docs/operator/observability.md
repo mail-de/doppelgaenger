@@ -154,3 +154,44 @@ override the severity threshold. Metrics and traces remain active independently
 of logging, including at `none`. CLI diagnostics and third-party output that
 bypasses the application logger are outside this setting. The standalone test
 servers retain their own logging configuration.
+
+
+## Correlation fields
+
+`trace_id` is omitted when no valid trace is active, for example when tracing
+is disabled. `req_id` remains available; HTTP also logs `x_request_id`.
+
+Use explicit allowlists to include incoming HTTP headers or gRPC metadata:
+
+```yaml
+log_fields:
+  request_headers: [Auth-User, X-Client-ID]
+  response_headers: [X-Session-ID]
+  request_metadata: [x-client-id]
+  response_metadata: [x-session-id]
+```
+
+All four lists default to empty. Choose response header names returned by your
+backend to correlate its logs with each comparison. The values appear in
+`request_headers`, `primary_response_headers`, and `shadow_response_headers`.
+For example, a selected `X-Session-ID` becomes
+`primary_response_headers.x_session_id` in JSON. gRPC uses `request_metadata`,
+`primary_response_metadata`, `shadow_response_metadata`,
+`primary_trailer_metadata`, and `shadow_trailer_metadata`.
+
+Field names become lowercase; punctuation becomes underscores. Invalid names
+and duplicate normalized keys in the same allowlist reject configuration.
+gRPC names must be lowercase ASCII metadata keys; binary (`-bin`) values are
+not supported. Missing or empty values and empty groups are omitted. One value
+is logged as a string; repeated values are logged as an ordered array.
+
+Incoming values are captured before forwarding headers or backend-specific
+overlays are applied. Only allowlisted fields are added; avoid passwords,
+credentials, cookies, and other values that should not enter logs. Milter has
+no corresponding header or metadata capture.
+
+Response correlation fields are read from the original backend response,
+independently of `compare_headers`, response forwarding, and
+`log_session_only_on_diff`. They do not affect comparison results. Normal
+`log_level` and `log_only_on_diff` filters still apply to the entire result
+event. Restart or reload the process to apply the configuration.

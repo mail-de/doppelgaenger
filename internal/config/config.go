@@ -292,6 +292,9 @@ type Config struct {
 	// LogLevel sets the minimum severity; none disables application logs.
 	LogLevel string `mapstructure:"log_level"`
 
+	// LogFields selects incoming and backend fields for correlation logs.
+	LogFields LogFieldsConfig `mapstructure:"log_fields"`
+
 	// LogJSON controls whether the logger should output JSON.
 	LogJSON bool `mapstructure:"log_json"`
 
@@ -622,6 +625,10 @@ func setObservabilityDefaults(v *viper.Viper) {
 }
 
 func validate(cfg *Config) error {
+	if err := validateLogFields(cfg.LogFields); err != nil {
+		return err
+	}
+
 	if _, err := logging.ParseLevel(cfg.LogLevel); err != nil {
 		return err
 	}

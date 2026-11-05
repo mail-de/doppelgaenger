@@ -52,6 +52,7 @@ and gRPC Shadow work bypasses the limiter. `shadow: always` does not bypass it.
 | `log_level` | `info` | All modes | Minimum severity: `debug`, `info`, `notice`, `warn`, `error`, or `none` (disable application logs). |
 | `log_json` | `true` | All modes | Emit JSON through Go `slog`; `false` selects text output. |
 | `log_only_on_diff` | `false` | HTTP and gRPC result logs | Suppress clean result logs. Differences, Shadow errors, and comparison errors remain eligible subject to `log_level`. |
+| `log_fields` | Empty allowlists | HTTP and gRPC result logs | Select `request_headers`, `response_headers`, `request_metadata`, and `response_metadata` for correlation independently of comparison. |
 | `log_session_only_on_diff` | `true` | HTTP result logs | Hide `X-Session-ID` values for clean, non-forced comparisons. |
 
 Lifecycle and error messages are not governed by `log_only_on_diff`. Milter

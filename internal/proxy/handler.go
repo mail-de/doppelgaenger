@@ -75,6 +75,7 @@ type HandlerDeps struct {
 }
 
 type httpLogPayload struct {
+	requestFields     slog.Attr
 	ctx               context.Context
 	reqID             uint64
 	traceID           string
@@ -102,13 +103,14 @@ type httpLogPayload struct {
 }
 
 type httpRequestContext struct {
-	reqID      uint64
-	start      time.Time
-	method     string
-	path       string
-	rawQuery   string
-	host       string
-	remoteAddr string
+	requestFields slog.Attr
+	reqID         uint64
+	start         time.Time
+	method        string
+	path          string
+	rawQuery      string
+	host          string
+	remoteAddr    string
 }
 
 type shadowDecision struct {
@@ -202,13 +204,14 @@ func (h *Handler) Handle(c *gin.Context) {
 
 func (h *Handler) newHTTPRequestContext(c *gin.Context) httpRequestContext {
 	return httpRequestContext{
-		reqID:      h.requestID.Add(1),
-		start:      time.Now(),
-		method:     c.Request.Method,
-		path:       c.Param("path"),
-		rawQuery:   c.Request.URL.RawQuery,
-		host:       c.Request.Host,
-		remoteAddr: clientIP(c.Request),
+		requestFields: logging.SelectedFields("request_headers", h.cfg.LogFields.RequestHeaders, c.Request.Header.Values),
+		reqID:         h.requestID.Add(1),
+		start:         time.Now(),
+		method:        c.Request.Method,
+		path:          c.Param("path"),
+		rawQuery:      c.Request.URL.RawQuery,
+		host:          c.Request.Host,
+		remoteAddr:    clientIP(c.Request),
 	}
 }
 
@@ -242,6 +245,7 @@ func (r httpRequestContext) payload(
 	primaryRes protocol.Response,
 ) httpLogPayload {
 	return httpLogPayload{
+		requestFields:     r.requestFields,
 		reqID:             r.reqID,
 		ctx:               ctx,
 		traceID:           traceID,
@@ -699,7 +703,7 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		return
 	}
 
-	h.logger.Log(payload.ctx, level, "auth_proxy",
+	h.httpResultLogger(payload).Log(payload.ctx, level, "auth_proxy",
 		"req_id", payload.reqID,
 		"trace_id", payload.traceID,
 		"x_request_id", payload.corrID,
@@ -740,6 +744,12 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 		"html_similarity", compareResult.HTMLSimilarity,
 		"compare_err", protocol.ErrString(payload.compareErr),
 	)
+}
+
+func (h *Handler) httpResultLogger(payload httpLogPayload) *slog.Logger {
+	return h.logger.With(payload.requestFields,
+		logging.SelectedFields("primary_response_headers", h.cfg.LogFields.ResponseHeaders, payload.primaryRes.Header.Values),
+		logging.SelectedFields("shadow_response_headers", h.cfg.LogFields.ResponseHeaders, payload.shadowRes.Header.Values))
 }
 
 func (h *Handler) normalizedCompareResult(payload httpLogPayload) protocol.CompareResult {
