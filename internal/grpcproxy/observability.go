@@ -24,15 +24,17 @@ import (
 const callerAuthCauseAttribute = "doppelgaenger.caller_auth.cause"
 
 type grpcRPCContext struct {
-	requestFields slog.Attr
-	reqID         uint64
-	traceID       string
-	remote        string
-	fullMethod    string
-	started       time.Time
-	outcome       string
-	spanErr       error
-	primaryStatus codes.Code
+	requestFields    slog.Attr
+	requestProtobuf  *logging.ProtobufCapture
+	responseProtobuf *logging.ProtobufCapture
+	reqID            uint64
+	traceID          string
+	remote           string
+	fullMethod       string
+	started          time.Time
+	outcome          string
+	spanErr          error
+	primaryStatus    codes.Code
 	// callerAuthCause is the bounded caller authentication failure class, if any.
 	callerAuthCause string
 	shadowEnabled   bool
@@ -41,7 +43,9 @@ type grpcRPCContext struct {
 
 type wrappedServerStream struct {
 	grpc.ServerStream
-	ctx context.Context
+	ctx              context.Context
+	requestProtobuf  *logging.ProtobufCapture
+	responseProtobuf *logging.ProtobufCapture
 }
 
 func (s wrappedServerStream) Context() context.Context {
@@ -50,13 +54,16 @@ func (s wrappedServerStream) Context() context.Context {
 
 func (h *Handler) newRPCContext(ctx context.Context, reqID uint64, fullMethod string, started time.Time) *grpcRPCContext {
 	incoming, _ := metadata.FromIncomingContext(ctx)
+	rule := h.cfg.LogFields.ProtobufRule(fullMethod)
 	rpcCtx := &grpcRPCContext{
-		requestFields: logging.SelectedFields("request_metadata", h.cfg.LogFields.RequestMetadata, incoming.Get),
-		reqID:         reqID,
-		fullMethod:    fullMethod,
-		started:       started,
-		outcome:       observability.OutcomeOK,
-		primaryStatus: codes.OK,
+		requestProtobuf:  logging.NewProtobufCapture("request_protobuf", rule.Request),
+		responseProtobuf: logging.NewProtobufCapture("primary_response_protobuf", rule.Response),
+		requestFields:    logging.SelectedFields("request_metadata", h.cfg.LogFields.RequestMetadata, incoming.Get),
+		reqID:            reqID,
+		fullMethod:       fullMethod,
+		started:          started,
+		outcome:          observability.OutcomeOK,
+		primaryStatus:    codes.OK,
 	}
 
 	if peerInfo, ok := peer.FromContext(ctx); ok && peerInfo.Addr != nil {
@@ -265,4 +272,23 @@ func grpcComparisonMetricResult(result grpcCompareResult) string {
 	default:
 		return observability.ResultError
 	}
+}
+
+func (s wrappedServerStream) RecvMsg(m any) error {
+	err := s.ServerStream.RecvMsg(m)
+	if err == nil {
+		if msg, ok := m.(*rawMessage); ok {
+			s.requestProtobuf.Observe(*msg)
+		}
+	}
+
+	return err
+}
+
+func (s wrappedServerStream) SendMsg(m any) error {
+	if msg, ok := m.(rawMessage); ok {
+		s.responseProtobuf.Observe(msg)
+	}
+
+	return s.ServerStream.SendMsg(m)
 }

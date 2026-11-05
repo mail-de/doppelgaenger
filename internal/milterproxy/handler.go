@@ -85,6 +85,9 @@ func (h *Handler) HandleConn(conn net.Conn) {
 	}()
 
 	ctx := context.Background()
+	if len(h.cfg.LogFields.MilterMacros) > 0 {
+		ctx = context.WithValue(ctx, macroContextKey{}, newMacroState(h.cfg.LogFields.MilterMacros, h.requestID.Add(1)))
+	}
 
 	primarySession, err := h.adapter.NewSession(ctx, protocol.TargetPrimary)
 	if err != nil {
@@ -131,6 +134,11 @@ func (h *Handler) shouldStopMilterLoop(err error) bool {
 }
 
 func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession protocol.TestSession, shadowWorker *milterShadowWorker, shadowEnabled bool, frame protocol.MilterFrame) bool {
+	var fields []slog.Attr
+	if state, ok := ctx.Value(macroContextKey{}).(*macroState); ok {
+		fields = state.observe(frame)
+	}
+
 	reqID := h.requestID.Add(1)
 	command := string(frame.Command)
 	frameCtx, span := h.startFrameSpan(ctx, reqID, command)
@@ -162,7 +170,7 @@ func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession
 	h.finishFrame(frameCtx, span, frameStart, command, shadowEnabled, observability.OutcomeOK, nil, result)
 
 	if shadowWorker == nil {
-		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result)
+		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result, fields...)
 
 		return true
 	}
@@ -171,12 +179,12 @@ func (h *Handler) handleFrame(ctx context.Context, conn net.Conn, primarySession
 		event:   event,
 		primary: result.Primary,
 		onComplete: func(shadowResult protocol.RunResult) {
-			h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, shadowResult)
+			h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, shadowResult, fields...)
 		},
 	})
 	if !accepted {
 		h.logger.Warn("milter_shadow_queue_full", "req_id", reqID, "trace_id", traceID)
-		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result)
+		h.logFrameResult(frameCtx, reqID, traceID, command, shadowEnabled, result, fields...)
 	}
 
 	return true
@@ -229,6 +237,7 @@ func (h *Handler) logFrameResult(
 	command string,
 	shadowEnabled bool,
 	result protocol.RunResult,
+	fields ...slog.Attr,
 ) {
 	shadowSelected := result.Shadow.Selected
 	if shadowEnabled && !result.ShadowStarted {
@@ -244,7 +253,7 @@ func (h *Handler) logFrameResult(
 		return
 	}
 
-	h.logger.Log(frameCtx, level, "milter_proxy",
+	attrs := []any{
 		"req_id", reqID,
 		"trace_id", traceID,
 		milterMetaCommand, command,
@@ -259,7 +268,12 @@ func (h *Handler) logFrameResult(
 		"diff", result.Compare.Diff,
 		"decision_diff", result.Compare.DecisionDiff,
 		"compare_err", protocol.ErrString(result.CompareErr),
-	)
+	}
+	for _, field := range fields {
+		attrs = append(attrs, field)
+	}
+
+	h.logger.Log(frameCtx, level, "milter_proxy", attrs...)
 }
 
 func (h *Handler) finishFrame(ctx context.Context, span trace.Span, frameStart time.Time, command string, shadowEnabled bool, outcome string, err error, result protocol.RunResult) {

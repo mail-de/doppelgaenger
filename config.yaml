@@ -405,6 +405,8 @@ log_level: info
 # Keys become lowercase with punctuation replaced by underscores.
 # Only select values intended for logs; do not include credentials.
 log_fields:
+  grpc_messages: []        # Exact full-method protobuf scalar selections; see observability guide
+  milter_macros: []        # Opt-in {name: queue_id, macro: i} selections
   request_headers: []       # Example: [Auth-User, X-Client-ID]
   response_headers: []      # Example: [X-Session-ID]
   request_metadata: []      # gRPC example: [x-client-id]

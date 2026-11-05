@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc"
@@ -18,18 +19,19 @@ import (
 )
 
 type grpcStreamResult struct {
-	Started       bool
-	Complete      bool
-	Selected      string
-	MessageCount  int
-	MessageHash   string
-	Header        metadata.MD
-	Trailer       metadata.MD
-	StatusCode    codes.Code
-	StatusMessage string
-	Duration      time.Duration
-	Err           string
-	SkipReason    string
+	ProtobufFields []slog.Attr
+	Started        bool
+	Complete       bool
+	Selected       string
+	MessageCount   int
+	MessageHash    string
+	Header         metadata.MD
+	Trailer        metadata.MD
+	StatusCode     codes.Code
+	StatusMessage  string
+	Duration       time.Duration
+	Err            string
+	SkipReason     string
 }
 
 type primaryReceiveResult struct {

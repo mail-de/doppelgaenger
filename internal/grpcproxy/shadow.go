@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/observability"
 )
 
@@ -30,8 +31,9 @@ const (
 )
 
 type shadowForwarder struct {
-	queue  chan rawMessage
-	cancel context.CancelFunc
+	capture *logging.ProtobufCapture
+	queue   chan rawMessage
+	cancel  context.CancelFunc
 
 	mu          sync.Mutex
 	queueClosed bool
@@ -70,8 +72,9 @@ func newShadowForwarder(
 	shadowCtx = outgoingContext(shadowCtx, overlay, obs)
 
 	forwarder := &shadowForwarder{
-		queue:  make(chan rawMessage, shadowQueueSize(cfg)),
-		cancel: cancel,
+		capture: logging.NewProtobufCapture("shadow_response_protobuf", cfg.LogFields.ProtobufRule(fullMethod).Response),
+		queue:   make(chan rawMessage, shadowQueueSize(cfg)),
+		cancel:  cancel,
 		result: grpcStreamResult{
 			Selected: target.Name,
 		},
@@ -191,7 +194,7 @@ func (s *shadowForwarder) run(ctx context.Context, target *Target, fullMethod st
 	}()
 
 	go func() {
-		recvDone <- receiveShadowResponses(shadow)
+		recvDone <- receiveShadowResponses(captureClientStream{ClientStream: shadow, capture: s.capture})
 	}()
 
 	if recvResult, ok := s.waitForShadowForwarding(ctx, sendDone, recvDone); ok {
@@ -409,6 +412,7 @@ func (s *shadowForwarder) snapshot() grpcStreamResult {
 	defer s.mu.Unlock()
 
 	result := s.result
+	result.ProtobufFields = s.capture.Attributes()
 	result.Header = cloneMetadata(result.Header)
 	result.Trailer = cloneMetadata(result.Trailer)
 
@@ -497,4 +501,20 @@ func errorFromStreamResult(result grpcStreamResult) error {
 	}
 
 	return errors.New(result.Err)
+}
+
+type captureClientStream struct {
+	grpc.ClientStream
+	capture *logging.ProtobufCapture
+}
+
+func (s captureClientStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err == nil {
+		if msg, ok := m.(*rawMessage); ok {
+			s.capture.Observe(*msg)
+		}
+	}
+
+	return err
 }

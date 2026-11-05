@@ -187,8 +187,8 @@ is logged as a string; repeated values are logged as an ordered array.
 
 Incoming values are captured before forwarding headers or backend-specific
 overlays are applied. Only allowlisted fields are added; avoid passwords,
-credentials, cookies, and other values that should not enter logs. Milter has
-no corresponding header or metadata capture.
+credentials, cookies, and other values that should not enter logs. Milter uses
+its own macro allowlist, described below.
 
 Response correlation fields are read from the original backend response,
 independently of `compare_headers`, response forwarding, and
@@ -237,5 +237,88 @@ or JSON parser errors containing body data are logged by this feature.
 Values appear under `request_json`, `primary_response_json`, and
 `shadow_response_json`, for example `request_json.auth_user`. Logging leaves
 request and response bodies unchanged and uses the existing body size limits.
-Normal result log filters still apply. This supports HTTP JSON bodies; gRPC
-payloads remain opaque and use the metadata allowlists described above.
+Normal result log filters still apply. For gRPC message fields, use the
+protobuf scalar selections described below.
+
+
+### gRPC protobuf scalars
+
+For backends returning correlation values inside protobuf messages rather than
+metadata, select field-number paths from the backend's `.proto` schema:
+
+```yaml
+log_fields:
+  grpc_messages:
+    - method: /example.Auth/Authenticate
+      request:
+        - {name: auth_user, path: [1], type: string}
+        - {name: client_ip, path: [4, 2], type: string}
+      response:
+        - {name: session_id, path: [3], type: string}
+```
+
+Methods match exactly. Paths use positive protobuf field numbers, including
+nested singular messages. Explicit types are `string`, `bool`, `int64`, `uint64`,
+and `sint64`; enums can use `int64`. No generated backend code, reflection,
+descriptor files, or backend-specific defaults are required. Keep selections
+aligned with your backend schema: wire field numbers do not encode field names
+or distinguish a string from an opaque byte value.
+
+Only the first message in each direction is captured, before forwarding overlays.
+Values appear in `request_protobuf`, `primary_response_protobuf`, and
+`shadow_response_protobuf`, independently of status/payload comparison. Each
+configured direction also has a `<group>_status` of `not_seen`, `captured`,
+`no_fields`, `malformed`, or `message_too_large`. A missing response, skipped
+shadow, or message without a selected field does not fabricate a session ID.
+Missing proto3 default values are omitted. Selectors must target singular fields. Multiple wire occurrences of selected
+fields or ancestors are ambiguous and omitted. Without descriptors, a single
+occurrence of a repeated field or map cannot be distinguished from a singular
+field; do not configure such paths. Packed fields, byte dumps, and legacy
+protobuf groups are unsupported. Invalid framing suppresses capture
+without changing forwarded bytes or RPC status.
+
+Limits: 128 exact methods, 32 fields per direction, path depth 8, inspected
+message size 64 KiB, UTF-8 string size 4 KiB, and selected values 16 KiB per
+direction. Oversized values are omitted, never truncated. Only selected scalar
+copies survive capture; request/response payloads are not retained for logging.
+Existing result log levels and `log_only_on_diff` still apply. Use
+`log_level: info` and `log_only_on_diff: false` to see successful RPC results.
+
+### Milter macros
+
+Select macros supplied by the connecting MTA:
+
+```yaml
+log_fields:
+  milter_macros:
+    - {name: queue_id, macro: i}
+    - {name: auth_user, macro: "{auth_authen}"}
+    - {name: client_ip, macro: "{client_addr}"}
+    - {name: client_port, macro: "{client_port}"}
+```
+
+Names may be written with or without braces. Values appear under
+`milter_macros` using the normalized alias. Only macros actually sent by the MTA
+are available; configure the MTA's macro lists separately. Doppelgaenger does
+not request additional macros or alter negotiation/forwarding. A queue ID is
+an MTA correlation value, not an authentication backend's session ID.
+
+`milter_connection_id` and `milter_message_number` accompany result events when
+macro capture is configured. The connection ID uses the process-local request
+counter; combine it with pod/container identity across replicas or restarts.
+The message number increases on MAIL FROM and survives connection reuse.
+Connection and HELO macros remain active across messages. MAIL FROM starts a
+fresh message scope; RCPT, DATA, end-of-headers, and end-of-message stages replace their
+own values even when no new macros arrive. End-of-message/abort clears message
+values after taking the log snapshot; QUIT/QUIT_NC clears all scopes. Earlier
+asynchronous comparisons keep their own immutable snapshot. Stage precedence
+is CONNECT, HELO, MAIL, RCPT, DATA, end-of-headers, end-of-message.
+
+Macro frames must contain complete NUL-terminated name/value pairs. Malformed
+frames clear capture for their stage and remain forwarded unchanged. Limits:
+32 selections, macro/alias names 64 ASCII characters, macro frame 64 KiB,
+UTF-8 value 4 KiB, selected values 16 KiB per stage and result snapshot.
+Missing/empty/oversized values are omitted. No passwords or arbitrary macro
+values are logged by default. Milter result events use the normal result log
+level (`info` for successful matches); `log_only_on_diff` currently applies only
+to HTTP and gRPC.

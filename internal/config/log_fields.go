@@ -11,6 +11,8 @@ import (
 
 // LogFieldsConfig defines opt-in field allowlists, independently of comparison.
 type LogFieldsConfig struct {
+	GRPCMessages     []ProtobufLogRule `mapstructure:"grpc_messages"`
+	MilterMacros     []MilterMacro     `mapstructure:"milter_macros"`
 	RequestJSON      map[string]string `mapstructure:"-"`
 	ResponseJSON     map[string]string `mapstructure:"-"`
 	RequestHeaders   []string          `mapstructure:"request_headers"`
@@ -44,6 +46,10 @@ func validateLogFields(cfg LogFieldsConfig) error {
 
 			seen[key] = true
 		}
+	}
+
+	if err := validateProtocolLogFields(cfg); err != nil {
+		return err
 	}
 
 	return validateJSONLogFields(cfg)

@@ -2,6 +2,7 @@ package grpcproxy
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -32,7 +33,17 @@ func (h *Handler) logRPCResult(
 		return
 	}
 
+	if len(shadowResult.ProtobufFields) == 0 {
+		shadowResult.ProtobufFields = logging.NewProtobufCapture("shadow_response_protobuf", h.cfg.LogFields.ProtobufRule(fullMethod).Response).Attributes()
+	}
+
 	attrs := grpcBaseLogAttributes(rpcCtx, fullMethod, decision)
+	for _, fields := range [][]slog.Attr{rpcCtx.requestProtobuf.Attributes(), rpcCtx.responseProtobuf.Attributes(), shadowResult.ProtobufFields} {
+		for _, field := range fields {
+			attrs = append(attrs, field)
+		}
+	}
+
 	attrs = append(attrs, rpcCtx.requestFields,
 		logging.SelectedFields("primary_response_metadata", h.cfg.LogFields.ResponseMetadata, primaryResult.Header.Get),
 		logging.SelectedFields("shadow_response_metadata", h.cfg.LogFields.ResponseMetadata, shadowResult.Header.Get),

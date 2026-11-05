@@ -84,7 +84,7 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 		return h.rejectCaller(rpcCtx, err)
 	}
 
-	wrappedStream := wrappedServerStream{ServerStream: stream, ctx: requestCtx}
+	wrappedStream := wrappedServerStream{ServerStream: stream, ctx: requestCtx, requestProtobuf: rpcCtx.requestProtobuf, responseProtobuf: rpcCtx.responseProtobuf}
 
 	decision, err := h.resolveDecision(fullMethod, rpcCtx)
 	if err != nil {
