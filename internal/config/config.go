@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -444,6 +445,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 
+	// Read both Viper fields and case-sensitive JSON aliases from one snapshot.
+	raw, err := os.ReadFile(v.ConfigFileUsed())
+	if err != nil {
+		return Config{}, fmt.Errorf("read config snapshot: %w", err)
+	}
+
+	if err := v.ReadConfig(bytes.NewReader(raw)); err != nil {
+		return Config{}, fmt.Errorf("read config snapshot: %w", err)
+	}
+
 	var cfg Config
 
 	decodeHook := mapstructure.ComposeDecodeHookFunc(
@@ -452,6 +463,10 @@ func Load() (Config, error) {
 	)
 	if err := v.Unmarshal(&cfg, viper.DecodeHook(decodeHook)); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
+	}
+
+	if err := decodeJSONLogFields(raw, &cfg.LogFields); err != nil {
+		return Config{}, err
 	}
 
 	if err := validate(&cfg); err != nil {

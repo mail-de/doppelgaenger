@@ -11,10 +11,12 @@ import (
 
 // LogFieldsConfig defines opt-in field allowlists, independently of comparison.
 type LogFieldsConfig struct {
-	RequestHeaders   []string `mapstructure:"request_headers"`
-	ResponseHeaders  []string `mapstructure:"response_headers"`
-	RequestMetadata  []string `mapstructure:"request_metadata"`
-	ResponseMetadata []string `mapstructure:"response_metadata"`
+	RequestJSON      map[string]string `mapstructure:"-"`
+	ResponseJSON     map[string]string `mapstructure:"-"`
+	RequestHeaders   []string          `mapstructure:"request_headers"`
+	ResponseHeaders  []string          `mapstructure:"response_headers"`
+	RequestMetadata  []string          `mapstructure:"request_metadata"`
+	ResponseMetadata []string          `mapstructure:"response_metadata"`
 }
 
 func validateLogFields(cfg LogFieldsConfig) error {
@@ -44,7 +46,7 @@ func validateLogFields(cfg LogFieldsConfig) error {
 		}
 	}
 
-	return nil
+	return validateJSONLogFields(cfg)
 }
 
 func validLogMetadataKey(key string) bool {
@@ -61,4 +63,30 @@ func validLogMetadataKey(key string) bool {
 	}
 
 	return true
+}
+
+func validateJSONLogFields(cfg LogFieldsConfig) error {
+	for _, list := range []struct {
+		name   string
+		fields map[string]string
+	}{
+		{logRequestJSON, cfg.RequestJSON}, {logResponseJSON, cfg.ResponseJSON},
+	} {
+		seen := make(map[string]bool)
+
+		for name, pointer := range list.fields {
+			key := logging.FieldKey(name)
+			if !httpguts.ValidHeaderFieldName(name) || seen[key] {
+				return fmt.Errorf("log_fields.%s: invalid or duplicate normalized key %q", list.name, name)
+			}
+
+			if err := logging.ValidateJSONSelector(pointer); err != nil {
+				return fmt.Errorf("log_fields.%s.%s: %w", list.name, name, err)
+			}
+
+			seen[key] = true
+		}
+	}
+
+	return nil
 }

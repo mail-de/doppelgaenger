@@ -171,7 +171,7 @@ log_fields:
   response_metadata: [x-session-id]
 ```
 
-All four lists default to empty. Choose response header names returned by your
+All header and metadata lists default to empty. Choose response header names returned by your
 backend to correlate its logs with each comparison. The values appear in
 `request_headers`, `primary_response_headers`, and `shadow_response_headers`.
 For example, a selected `X-Session-ID` becomes
@@ -195,3 +195,47 @@ independently of `compare_headers`, response forwarding, and
 `log_session_only_on_diff`. They do not affect comparison results. Normal
 `log_level` and `log_only_on_diff` filters still apply to the entire result
 event. Restart or reload the process to apply the configuration.
+
+
+### HTTP JSON bodies
+
+Use `request_json` and `response_json` maps to select JSON body fields:
+
+```yaml
+log_fields:
+  request_json:
+    auth_user: "$.username"
+    client_id: "$.client.id"
+  response_json:
+    session_id: "$.session.id"
+```
+
+Each entry maps a log field alias to a case-sensitive JSON selector. Aliases
+are normalized like header names; duplicate normalized aliases are rejected,
+including case-only collisions. Alias spelling is preserved when loading YAML.
+
+The supported JSONPath subset selects exactly one location: `$.client.id`,
+`$.items[0].id`, or quoted members such as `$['client.id']` and `$["client-id"]`.
+Dot members support ASCII letters, digits after the first character, and
+underscores. Use quoted brackets for punctuation or Unicode property names.
+Bracket members accept JSON string escapes and single-quoted strings also
+accept `\'`. Array indices must be canonical non-negative integers. Root-only
+selectors, wildcards, filters, slices, unions, and recursive descent are
+rejected when loading configuration.
+
+Non-root RFC 6901 JSON pointers are also supported: `/client/id` selects a
+nested property, `/items/0/id` selects the first array item's property, and
+`~1` and `~0` escape `/` and `~`. Invalid pointer syntax rejects configuration.
+
+The maps default to empty. JSON parsing is opt-in and independent of comparison
+mode and Content-Type. Bodies must contain exactly one valid JSON document.
+Missing paths, malformed JSON, null, empty strings, objects, and arrays are
+omitted. Select individual scalar leaves explicitly; strings, booleans, and
+numbers are supported. Large numbers retain their precision. No whole bodies
+or JSON parser errors containing body data are logged by this feature.
+
+Values appear under `request_json`, `primary_response_json`, and
+`shadow_response_json`, for example `request_json.auth_user`. Logging leaves
+request and response bodies unchanged and uses the existing body size limits.
+Normal result log filters still apply. This supports HTTP JSON bodies; gRPC
+payloads remain opaque and use the metadata allowlists described above.

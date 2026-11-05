@@ -281,6 +281,8 @@ log_fields:
   response_headers: []      # Example: [X-Session-ID]
   request_metadata: []      # gRPC example: [x-client-id]
   response_metadata: []     # gRPC headers and trailers, e.g. [x-session-id]
+  request_json: {}          # HTTP alias-to-JSON-selector map, e.g. {auth_user: "$.username"}
+  response_json: {}         # HTTP example: {session_id: "$.session.id"}
 # ------------------------------------------------------------------------------
 # log_session_only_on_diff: log session headers only when differences exist.
 log_session_only_on_diff: true

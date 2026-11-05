@@ -31,7 +31,7 @@ func TestEmptyTraceID(t *testing.T) {
 
 func TestSelectedFields(t *testing.T) {
 	fields := SelectedFields("request_headers", []string{testAuthUserField, testClientIDField, "Missing"}, func(key string) []string {
-		return map[string][]string{testAuthUserField: {"alice"}, testClientIDField: {"one", "two"}}[key]
+		return map[string][]string{testAuthUserField: {testLogUsername}, testClientIDField: {"one", "two"}}[key]
 	})
 
 	var output bytes.Buffer

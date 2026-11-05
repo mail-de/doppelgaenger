@@ -76,6 +76,7 @@ type HandlerDeps struct {
 
 type httpLogPayload struct {
 	requestFields     slog.Attr
+	requestJSONFields slog.Attr
 	ctx               context.Context
 	reqID             uint64
 	traceID           string
@@ -103,14 +104,15 @@ type httpLogPayload struct {
 }
 
 type httpRequestContext struct {
-	requestFields slog.Attr
-	reqID         uint64
-	start         time.Time
-	method        string
-	path          string
-	rawQuery      string
-	host          string
-	remoteAddr    string
+	requestFields     slog.Attr
+	requestJSONFields slog.Attr
+	reqID             uint64
+	start             time.Time
+	method            string
+	path              string
+	rawQuery          string
+	host              string
+	remoteAddr        string
 }
 
 type shadowDecision struct {
@@ -167,6 +169,8 @@ func (h *Handler) Handle(c *gin.Context) {
 	if !ok {
 		return
 	}
+
+	request.requestJSONFields = logging.SelectedJSONFields("request_json", h.cfg.LogFields.RequestJSON, body)
 
 	hdr := headers.Clone(c.Request.Header)
 
@@ -246,6 +250,7 @@ func (r httpRequestContext) payload(
 ) httpLogPayload {
 	return httpLogPayload{
 		requestFields:     r.requestFields,
+		requestJSONFields: r.requestJSONFields,
 		reqID:             r.reqID,
 		ctx:               ctx,
 		traceID:           traceID,
@@ -747,7 +752,9 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 }
 
 func (h *Handler) httpResultLogger(payload httpLogPayload) *slog.Logger {
-	return h.logger.With(payload.requestFields,
+	return h.logger.With(payload.requestFields, payload.requestJSONFields,
+		logging.SelectedJSONFields("primary_response_json", h.cfg.LogFields.ResponseJSON, payload.primaryRes.Body),
+		logging.SelectedJSONFields("shadow_response_json", h.cfg.LogFields.ResponseJSON, payload.shadowRes.Body),
 		logging.SelectedFields("primary_response_headers", h.cfg.LogFields.ResponseHeaders, payload.primaryRes.Header.Values),
 		logging.SelectedFields("shadow_response_headers", h.cfg.LogFields.ResponseHeaders, payload.shadowRes.Header.Values))
 }
