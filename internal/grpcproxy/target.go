@@ -35,6 +35,10 @@ type TargetPool struct {
 	policy failover.Policy
 	health *failover.Health
 	clock  failover.Clock
+
+	// load counts the open streams per target. It is set for least_conn
+	// pools with more than one target.
+	load *failover.Load
 }
 
 // TargetPools groups primary and shadow upstream pools.

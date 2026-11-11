@@ -28,8 +28,8 @@ is zero.
 | `tls_key_file` | empty | Inbound private key. Must be paired with `tls_cert_file`. |
 | `primary_base_urls` | `https://127.0.0.1:9001` | Required Primary URL pool. |
 | `shadow_base_urls` | `https://127.0.0.1:9002` | Shadow URL pool. Explicit `[]` disables Shadow, including forced and `always` traffic. |
-| `primary_selection_mode` | `round_robin` | `round_robin` or `source_ip_hash`. Unknown values currently normalize to `round_robin`. |
-| `shadow_selection_mode` | `round_robin` | `round_robin` or `source_ip_hash`. Unknown values currently normalize to `round_robin`. |
+| `primary_selection_mode` | `round_robin` | `round_robin`, `source_ip_hash`, or `least_conn`. Unknown values currently normalize to `round_robin`. |
+| `shadow_selection_mode` | `round_robin` | `round_robin`, `source_ip_hash`, or `least_conn`. Unknown values currently normalize to `round_robin`. |
 
 With both inbound TLS files set, the listener supports HTTP/1.1 and HTTP/2 via
 ALPN. Without them, it serves plaintext HTTP/1.1. An incomplete pair is a
@@ -37,6 +37,10 @@ startup error.
 
 `source_ip_hash` removes the client port before hashing. If no usable client IP
 is present, selection falls back to the selector's normal behavior.
+
+`least_conn` sends each request to the backend with the fewest requests in
+flight and avoids backends that could not be reached recently. See
+[Backend selection](selection.md).
 
 `primary_failover` and `shadow_failover` can repeat a request on the same or
 another backend when no connection could be established. Only connect-phase

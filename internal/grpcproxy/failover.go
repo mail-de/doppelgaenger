@@ -3,6 +3,7 @@ package grpcproxy
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -37,19 +38,38 @@ func noopRelease() {}
 // streamOpener opens an upstream client stream.
 type streamOpener func(ctx context.Context) openedStream
 
+// setFailoverPolicy configures retry, failover, and the selection state that
+// depends on them. It must be called once after the targets are set.
+//
+// A least_conn pool tracks open streams and always keeps the passive cooldown,
+// even when the policy is disabled: an unreachable target has no open streams
+// and would otherwise be the first choice of every call.
 func (p *TargetPool) setFailoverPolicy(policy failover.Policy) {
 	if p == nil {
 		return
 	}
 
 	p.policy = policy
-	if p.failoverActive() {
+
+	if p.mode == selectionModeLeastConn && len(p.targets) > 1 {
+		p.load = failover.NewLoad(len(p.targets))
+	}
+
+	if p.failoverEngaged() {
 		p.health = failover.NewHealth(len(p.targets), policy.Cooldown)
 	}
 }
 
+// failoverActive reports whether the policy can make more than one attempt.
 func (p *TargetPool) failoverActive() bool {
 	return p != nil && p.policy.Active(len(p.targets))
+}
+
+// failoverEngaged reports whether streams are opened through the failover
+// engine: the policy is active, or least_conn needs the engine's
+// connect-failure feedback for its first choice.
+func (p *TargetPool) failoverEngaged() bool {
+	return p != nil && (p.load != nil || p.failoverActive())
 }
 
 // openStream creates a client stream starting with the selected target.
@@ -60,6 +80,9 @@ func (p *TargetPool) failoverActive() bool {
 // NewStream error is produced before the stream headers are committed, so the
 // upstream handler never ran. Once a stream exists, failures are always final
 // because client messages are forwarded as they arrive.
+//
+// A least_conn pool counts the stream as open on its target from the attempt
+// until the returned release function is called.
 func (p *TargetPool) openStream(
 	ctx context.Context,
 	selection targetSelection,
@@ -75,17 +98,24 @@ func (p *TargetPool) openStream(
 		}
 	}
 
-	if !p.failoverActive() {
+	if !p.failoverEngaged() {
 		return p.openSingleStream(ctx, selection.index, fullMethod, callOptions)
 	}
 
-	result := openedStream{release: noopRelease}
-	runner := failover.Runner{Policy: p.policy, Health: p.health, Clock: p.clock, ExtraDown: p.transientFailure}
-	order := failover.Order(selection.index, len(p.targets), selection.hashed, selection.seed)
+	var single [1]int
 
-	result.stats = runner.Run(ctx, order, func(attempt failover.Attempt) failover.Outcome {
+	result := openedStream{release: noopRelease}
+	runner := failover.Runner{
+		Policy:       p.policy,
+		Health:       p.health,
+		Clock:        p.clock,
+		ExtraDown:    p.transientFailure,
+		FreshSuccess: p.load != nil,
+	}
+
+	result.stats = runner.Run(ctx, p.attemptOrder(selection, single[:0]), func(attempt failover.Attempt) failover.Outcome {
 		target := p.targets[attempt.Index]
-		stream, release, outcome, err := p.tryNewStream(ctx, target, fullMethod, callOptions)
+		stream, release, outcome, err := p.tryNewStream(ctx, attempt.Index, fullMethod, callOptions)
 
 		result.stream, result.release, result.target, result.err = stream, release, target, err
 
@@ -101,6 +131,34 @@ func (p *TargetPool) openStream(
 	}
 
 	return result
+}
+
+// attemptOrder returns the targets to try for one call, first choice first.
+// A least_conn pool makes that choice here, right before the stream is
+// created. buf holds the result when the policy cannot move to another target
+// and no fallbacks are needed.
+func (p *TargetPool) attemptOrder(selection targetSelection, buf []int) []int {
+	if selection.leastConn && p.load != nil {
+		selection.index = p.load.Pick(p.available)
+	}
+
+	if !p.failoverActive() || p.policy.MaxTargets == 1 {
+		return append(buf, selection.index)
+	}
+
+	return p.candidateOrder(selection)
+}
+
+// candidateOrder returns all target indexes for one call, starting with the
+// selected target.
+func (p *TargetPool) candidateOrder(selection targetSelection) []int {
+	if selection.leastConn && p.load != nil {
+		if order := p.load.Order(selection.index); len(order) == len(p.targets) {
+			return order
+		}
+	}
+
+	return failover.Order(selection.index, len(p.targets), selection.hashed, selection.seed)
 }
 
 func (p *TargetPool) openSingleStream(ctx context.Context, index int, fullMethod string, callOptions []grpc.CallOption) openedStream {
@@ -122,11 +180,15 @@ func (p *TargetPool) openSingleStream(ctx context.Context, index int, fullMethod
 	return result
 }
 
-// tryNewStream runs one stream-creation attempt bounded by the policy's
-// attempt timeout. The timeout only covers NewStream; it is disarmed before
-// the stream is handed to the caller and never limits the stream lifetime.
-// On success the returned release function frees the attempt context.
-func (p *TargetPool) tryNewStream(ctx context.Context, target *Target, fullMethod string, callOptions []grpc.CallOption) (grpc.ClientStream, func(), failover.Outcome, error) {
+// tryNewStream runs one stream-creation attempt on the target at index. With
+// an active policy the attempt is bounded by the attempt timeout. The timeout
+// only covers NewStream; it is disarmed before the stream is handed to the
+// caller and never limits the stream lifetime.
+//
+// On success the returned release function frees the attempt context and the
+// target's in-flight slot. A failed attempt holds neither when it returns.
+func (p *TargetPool) tryNewStream(ctx context.Context, index int, fullMethod string, callOptions []grpc.CallOption) (grpc.ClientStream, func(), failover.Outcome, error) {
+	target := p.targets[index]
 	if target == nil || target.Conn == nil {
 		return nil, noopRelease, failover.OutcomeRetry, status.Error(codes.Unavailable, "gRPC target connection unavailable")
 	}
@@ -134,18 +196,20 @@ func (p *TargetPool) tryNewStream(ctx context.Context, target *Target, fullMetho
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 
 	var timer *time.Timer
-	if p.policy.AttemptTimeout > 0 {
+	if p.failoverActive() && p.policy.AttemptTimeout > 0 {
 		timer = time.AfterFunc(p.policy.AttemptTimeout, cancelAttempt)
 	}
+
+	release := p.trackStream(index, cancelAttempt)
 
 	stream, err := target.Conn.NewStream(attemptCtx, genericStreamDesc(), fullMethod, callOptions...)
 	timedOut := timer != nil && !timer.Stop()
 
 	if err == nil && !timedOut {
-		return stream, cancelAttempt, failover.OutcomeDone, nil
+		return stream, release, failover.OutcomeDone, nil
 	}
 
-	cancelAttempt()
+	release()
 
 	if err == nil {
 		// The timer fired after NewStream returned: the stream exists and its
@@ -154,6 +218,27 @@ func (p *TargetPool) tryNewStream(ctx context.Context, target *Target, fullMetho
 	}
 
 	return nil, noopRelease, classifyStreamCreateError(err, timedOut, ctx.Err()), err
+}
+
+// trackStream counts a stream attempt as open on the target at index and
+// returns the function that ends it: it frees the in-flight slot exactly once
+// and cancels the attempt context. The function may be called more than once.
+func (p *TargetPool) trackStream(index int, cancel context.CancelFunc) func() {
+	if p.load == nil {
+		return cancel
+	}
+
+	p.load.Acquire(index)
+
+	var released atomic.Bool
+
+	return func() {
+		if released.CompareAndSwap(false, true) {
+			p.load.Release(index)
+		}
+
+		cancel()
+	}
 }
 
 // classifyStreamCreateError decides whether a NewStream error may be repeated
@@ -285,6 +370,15 @@ func (h *Handler) attemptFailureRecorder(ctx context.Context, span trace.Span, b
 }
 
 func (h *Handler) recordFailoverStats(ctx context.Context, span trace.Span, backend string, pool *TargetPool, opened openedStream) {
+	if !pool.failoverEngaged() {
+		return
+	}
+
+	// The span was started before the final target was known.
+	if span != nil && span.IsRecording() && opened.target != nil {
+		span.SetAttributes(attribute.String("server.address", opened.target.Address))
+	}
+
 	if !pool.failoverActive() {
 		return
 	}
@@ -292,12 +386,7 @@ func (h *Handler) recordFailoverStats(ctx context.Context, span trace.Span, back
 	stats := opened.stats
 
 	if span != nil && span.IsRecording() {
-		attrs := []attribute.KeyValue{attribute.Int("doppelgaenger.backend.attempts", stats.Attempts)}
-		if opened.target != nil {
-			attrs = append(attrs, attribute.String("server.address", opened.target.Address))
-		}
-
-		span.SetAttributes(attrs...)
+		span.SetAttributes(attribute.Int("doppelgaenger.backend.attempts", stats.Attempts))
 	}
 
 	if h != nil {

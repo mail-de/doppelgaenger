@@ -68,7 +68,7 @@ primary_grpc_targets: []
 #       insecure_skip_verify: false
 
 # primary_grpc_selection_mode: strategy for selecting one primary gRPC target.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 # Applies to: gRPC protocol.
 primary_grpc_selection_mode: "round_robin"
 
@@ -135,7 +135,7 @@ shadow_grpc_targets: []
 #       insecure_skip_verify: false
 
 # shadow_grpc_selection_mode: strategy for selecting one shadow gRPC target.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 # Applies to: gRPC protocol.
 shadow_grpc_selection_mode: "round_robin"
 
@@ -147,7 +147,7 @@ primary_base_urls:
   - "https://127.0.0.1:9001"
 
 # primary_selection_mode: strategy for selecting one primary backend per request.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 # Applies to: HTTP protocol.
 primary_selection_mode: "round_robin"
 
@@ -158,7 +158,7 @@ shadow_base_urls:
   - "https://127.0.0.1:9002"
 
 # shadow_selection_mode: strategy for selecting one shadow backend per request.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 # Applies to: HTTP protocol.
 shadow_selection_mode: "round_robin"
 
@@ -181,7 +181,7 @@ primary_failover:
   backoff_max: "2s"       # Cap for a single delay.
   backoff_jitter: 0.2     # +/- fraction applied to each delay (0-1).
   max_wait: "5s"          # Total budget; no new attempt starts after it. 0 = no budget.
-  cooldown: "10s"         # Try a target last for this long after a connect failure. 0 = off.
+  cooldown: "10s"         # Try a target last for this long after a connect failure. 0 = off (not with least_conn).
   attempt_timeout: "2s"   # gRPC only: max wait for one stream creation.
 
 shadow_failover:

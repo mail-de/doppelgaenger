@@ -64,6 +64,7 @@ const (
 
 	selectionRoundRobin   = "round_robin"
 	selectionSourceIPHash = "source_ip_hash"
+	selectionLeastConn    = "least_conn"
 
 	upstreamHTTPProtocolAuto  = "auto"
 	upstreamHTTPProtocolHTTP1 = "http1"
@@ -95,7 +96,7 @@ type Config struct {
 	PrimaryBaseURLs []*url.URL `mapstructure:"primary_base_urls"`
 
 	// PrimarySelectionMode controls primary backend selection strategy.
-	// Supported: round_robin, source_ip_hash.
+	// Supported: round_robin, source_ip_hash, least_conn.
 	PrimarySelectionMode string `mapstructure:"primary_selection_mode"`
 
 	// ShadowBaseURLs is the list of shadow backends.
@@ -103,7 +104,7 @@ type Config struct {
 	ShadowBaseURLs []*url.URL `mapstructure:"shadow_base_urls"`
 
 	// ShadowSelectionMode controls shadow backend selection strategy.
-	// Supported: round_robin, source_ip_hash.
+	// Supported: round_robin, source_ip_hash, least_conn.
 	ShadowSelectionMode string `mapstructure:"shadow_selection_mode"`
 
 	// PrimaryFailover configures connect-phase retry and failover for primary backends.
@@ -178,11 +179,11 @@ type Config struct {
 	GRPCTLS GRPCTLSConfig `mapstructure:"grpc_tls"`
 
 	// PrimaryGRPCSelectionMode controls primary gRPC target selection.
-	// Supported: round_robin, source_ip_hash.
+	// Supported: round_robin, source_ip_hash, least_conn.
 	PrimaryGRPCSelectionMode string `mapstructure:"primary_grpc_selection_mode"`
 
 	// ShadowGRPCSelectionMode controls shadow gRPC target selection.
-	// Supported: round_robin, source_ip_hash.
+	// Supported: round_robin, source_ip_hash, least_conn.
 	ShadowGRPCSelectionMode string `mapstructure:"shadow_grpc_selection_mode"`
 
 	// PrimaryGRPCTargets is the list of primary gRPC backends.
@@ -1068,10 +1069,10 @@ func normalizeGRPCSelectionMode(raw string, field string) (string, error) {
 	switch mode {
 	case "":
 		return selectionRoundRobin, nil
-	case selectionRoundRobin, selectionSourceIPHash:
+	case selectionRoundRobin, selectionSourceIPHash, selectionLeastConn:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("%s must be one of round_robin or source_ip_hash", field)
+		return "", fmt.Errorf("%s must be one of round_robin, source_ip_hash, or least_conn", field)
 	}
 }
 
@@ -1709,7 +1710,7 @@ func decodeURLHook() mapstructure.DecodeHookFuncType {
 func normalizeSelectionMode(mode string) string {
 	normalized := strings.ToLower(strings.TrimSpace(mode))
 	switch normalized {
-	case "", selectionRoundRobin, selectionSourceIPHash:
+	case "", selectionRoundRobin, selectionSourceIPHash, selectionLeastConn:
 		if normalized == "" {
 			return selectionRoundRobin
 		}

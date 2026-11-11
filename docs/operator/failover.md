@@ -83,7 +83,7 @@ shadow_failover:
 | `backoff_max` | `2s` | Upper bound for a single delay. Must be at least `backoff_initial`. |
 | `backoff_jitter` | `0.2` | Randomizes each delay by up to plus or minus this fraction, `0` to `1`. The result never exceeds `backoff_max`. |
 | `max_wait` | `5s` | Total budget measured from the first attempt. No new attempt or backoff starts once it would be exceeded. `0` removes this budget; the attempt count and the request deadline still apply. |
-| `cooldown` | `10s` | After a connect failure the target is tried last for this long. `0` disables the cooldown. |
+| `cooldown` | `10s` | After a connect failure the target is tried last for this long. `0` disables the cooldown. The `least_conn` selection mode needs a value above `0` and applies it even while `enabled` is `false`; see [Backend selection](selection.md#unreachable-targets). |
 | `attempt_timeout` | `2s` | gRPC only: the longest time one stream creation may wait, for example for a host that accepts TCP but never answers. It does not limit the stream once it exists. If it expires in the instant the stream was created, the call fails with `UNAVAILABLE` and is not repeated. HTTP uses `upstream_http_dial_timeout` and `upstream_http_tls_handshake_timeout` instead. |
 
 All values are validated at startup, even when `enabled` is `false`. Durations
@@ -124,6 +124,10 @@ mode, so traffic distribution is unchanged while all targets are healthy.
   each client always lands on the same fallback, and clients of healthy targets
   are not moved. After the failed target is back (and its cooldown expired),
   its clients return to it.
+- `least_conn`: the first choice is the target with the fewest requests in
+  flight that is not in cooldown. Fallbacks follow with the least busy target
+  first. A request counts on the target of its current attempt only, so a
+  failed attempt does not leave load behind.
 
 Use `max_targets: 1` with `source_ip_hash` when affinity must never be broken;
 the proxy then only retries the hashed target.
@@ -135,11 +139,15 @@ failed is moved to the end of the candidate order for `cooldown`, so later
 requests do not each pay a connect timeout for a target that is known to be
 down. It is fail-open: a target in cooldown is still tried when no other
 target is left, and when every target is in cooldown the normal order is used.
-A successful connection to a target clears its cooldown immediately.
+A successful connection to a target clears its cooldown immediately. A
+`least_conn` pool is stricter and keeps the target out for the whole cooldown;
+see [Backend selection](selection.md#unreachable-targets).
 
 With `round_robin`, requests that selected a target in cooldown go to the next
 target in the list, so that target carries the extra load while its neighbour
-is down. Plan capacity per backend accordingly.
+is down. Plan capacity per backend accordingly, or use `least_conn`: it does
+not select a target in cooldown in the first place and spreads the traffic
+over all remaining targets by their current load.
 
 In gRPC mode, targets whose channel reports transient failure are also ordered
 last. Each gRPC channel reconnects with the gRPC client's own backoff, which
@@ -198,7 +206,8 @@ per-connection sessions. Retry and failover are not supported there, and
   `backend_attempt_failed` with `protocol`, `backend`, `req_id`, `attempt`,
   `selected`, and `err`: at `WARN` for Primary and `DEBUG` for Shadow. This
   includes the last attempt of an exhausted request, which is then also
-  reported by the normal failure log.
+  reported by the normal failure log. A `least_conn` pool writes this record
+  for every failure that starts a cooldown, also while failover is disabled.
 - `doppelgaenger_backend_retries_total{protocol,target,result}` counts each
   extra attempt as `retry` (same target) or `failover` (different target), and
   each exchange whose attempts were all refused as `exhausted`. A request whose

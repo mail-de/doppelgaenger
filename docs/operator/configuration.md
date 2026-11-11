@@ -45,6 +45,15 @@ The limiter is process-local. HTTP consumes a token for a sampled request,
 gRPC for a sampled RPC, and Milter for a sampled client connection. Forced HTTP
 and gRPC Shadow work bypasses the limiter. `shadow: always` does not bypass it.
 
+## Backend selection
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `primary_selection_mode`, `shadow_selection_mode` | `round_robin` | HTTP: `round_robin`, `source_ip_hash`, or `least_conn`. |
+| `primary_grpc_selection_mode`, `shadow_grpc_selection_mode` | `round_robin` | gRPC: the same values. |
+
+See [Backend selection](selection.md).
+
 ## Retry and failover
 
 | Key | Default | Meaning |

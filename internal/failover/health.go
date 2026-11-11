@@ -59,6 +59,29 @@ func (h *Health) MarkSuccess(i int) {
 	}
 }
 
+// mark returns the cooldown state of target i. The Runner takes it before an
+// attempt so that a later success can tell whether a failure was recorded
+// while the attempt was running.
+func (h *Health) mark(i int) int64 {
+	if h == nil || i < 0 || i >= len(h.downUntil) {
+		return 0
+	}
+
+	return h.downUntil[i].Load()
+}
+
+// markSuccessSince clears the cooldown of target i unless a failure was
+// recorded after mark was taken. A request that started before the target
+// went away, for example on a backend that is draining, says nothing about
+// whether the target accepts new requests. See Runner.FreshSuccess.
+func (h *Health) markSuccessSince(i int, mark int64) {
+	if h == nil || i < 0 || i >= len(h.downUntil) || mark == 0 {
+		return
+	}
+
+	h.downUntil[i].CompareAndSwap(mark, 0)
+}
+
 // Available reports whether target i is outside its cooldown.
 func (h *Health) Available(i int) bool {
 	if h == nil || i < 0 || i >= len(h.downUntil) {
@@ -82,22 +105,40 @@ func (h *Health) Arrange(order []int, extraDown func(int) bool) []int {
 		return order
 	}
 
-	available := make([]int, 0, len(order))
-	down := make([]int, 0, len(order))
+	// A fully healthy pool is the common case and must not allocate: with
+	// failover enabled this runs for every request.
+	firstDown := -1
 
-	for _, index := range order {
-		if h.Available(index) && (extraDown == nil || !extraDown(index)) {
-			available = append(available, index)
+	for position, index := range order {
+		if h.down(index, extraDown) {
+			firstDown = position
+
+			break
+		}
+	}
+
+	if firstDown < 0 {
+		return order
+	}
+
+	arranged := make([]int, 0, len(order))
+	arranged = append(arranged, order[:firstDown]...)
+	down := make([]int, 0, len(order)-firstDown)
+	down = append(down, order[firstDown])
+
+	for _, index := range order[firstDown+1:] {
+		if h.down(index, extraDown) {
+			down = append(down, index)
 
 			continue
 		}
 
-		down = append(down, index)
+		arranged = append(arranged, index)
 	}
 
-	if len(down) == 0 {
-		return order
-	}
+	return append(arranged, down...)
+}
 
-	return append(available, down...)
+func (h *Health) down(index int, extraDown func(int) bool) bool {
+	return !h.Available(index) || (extraDown != nil && extraDown(index))
 }

@@ -59,6 +59,16 @@ The protocol-neutral attempt engine (candidate order, backoff, budget, and
 passive cooldown) lives in `internal/failover`; the HTTP requester and the gRPC
 target pools supply the protocol-specific safety classification.
 
+The `least_conn` selection mode uses the in-flight counters of the same
+package (`failover.Load`). A slot is held for exactly one running attempt: the
+HTTP requester brackets `client.Do` and the response read, the gRPC pool holds
+it from stream creation until the stream's release function runs. The target
+is chosen immediately before the slot is taken; the gRPC pool therefore
+decides when the stream is opened, not when the call is routed. Because an
+unreachable target never holds a slot, such a pool always opens its attempts
+through the engine, even with a disabled policy, so that connect failures
+start the cooldown that keeps the target out of the first choice.
+
 Primary response headers, messages, trailers, and status remain client-visible.
 The Shadow stream is observed separately. OIDC token injection is a Primary
 metadata concern and is applied before the Primary upstream call.

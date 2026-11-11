@@ -95,7 +95,7 @@ primary_base_urls:
   - "http://fakehttpserver-primary:9001"
 
 # primary_selection_mode: strategy for selecting one primary backend per request.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 primary_selection_mode: "round_robin"
 
 # shadow_base_urls: list of shadow HTTP backends for load distribution.
@@ -104,7 +104,7 @@ shadow_base_urls:
   - "http://fakehttpserver-shadow:9002"
 
 # shadow_selection_mode: strategy for selecting one shadow backend per request.
-# Supported values: "round_robin", "source_ip_hash".
+# Supported values: "round_robin", "source_ip_hash", "least_conn".
 shadow_selection_mode: "round_robin"
 
 # Retry & Failover Settings

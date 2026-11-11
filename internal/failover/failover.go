@@ -230,6 +230,12 @@ type Runner struct {
 	// ExtraDown optionally reports targets known to be down by other means.
 	// Such targets are moved to the end of each round like targets in cooldown.
 	ExtraDown func(index int) bool
+	// FreshSuccess lets a success end a cooldown only when its attempt
+	// started after the failure. Pools that select by load set it: a target
+	// that is shutting down finishes its old requests while it refuses new
+	// ones, has the fewest requests in flight, and would be selected again
+	// with every request that still completes.
+	FreshSuccess bool
 }
 
 // Run calls try for candidates in order until an attempt returns OutcomeDone or
@@ -284,12 +290,13 @@ func (r Runner) runRound(ctx context.Context, clock Clock, start time.Time, roun
 			return false
 		}
 
+		mark := r.Health.mark(index)
 		outcome := runAttempt(stats, round, index, try)
 		stats.Exhausted = outcome == OutcomeRetry
 
 		if outcome != OutcomeRetry {
 			if outcome == OutcomeDone {
-				r.Health.MarkSuccess(index)
+				r.markSuccess(index, mark)
 			}
 
 			return false
@@ -299,6 +306,18 @@ func (r Runner) runRound(ctx context.Context, clock Clock, start time.Time, roun
 	}
 
 	return true
+}
+
+// markSuccess ends the cooldown of a target after a successful attempt. mark
+// is the target's cooldown state from before the attempt.
+func (r Runner) markSuccess(index int, mark int64) {
+	if r.FreshSuccess {
+		r.Health.markSuccessSince(index, mark)
+
+		return
+	}
+
+	r.Health.MarkSuccess(index)
 }
 
 func runAttempt(stats *Stats, round, index int, try func(Attempt) Outcome) Outcome {

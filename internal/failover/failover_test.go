@@ -452,6 +452,89 @@ func TestHealthFailsOpenWhenAllTargetsAreDown(t *testing.T) {
 	}
 }
 
+// Without FreshSuccess any success on a target ends its cooldown, as before
+// least_conn existed.
+func TestRunSuccessEndsCooldownByDefault(t *testing.T) {
+	clock := newFakeClock()
+	health := newHealthWithClock(2, time.Minute, clock.Now)
+
+	Runner{Policy: enabledPolicy(), Health: health, Clock: clock}.Run(context.Background(), []int{0, 1}, func(a Attempt) Outcome {
+		health.MarkFailure(a.Index)
+
+		return OutcomeDone
+	})
+
+	if !health.Available(0) {
+		t.Fatal("a success must end the cooldown when FreshSuccess is not set")
+	}
+}
+
+// With FreshSuccess a request that was already running when its target went
+// away must not end the cooldown: on a draining backend old requests finish
+// while new ones are refused.
+func TestRunFreshSuccessIgnoresStaleSuccess(t *testing.T) {
+	clock := newFakeClock()
+	health := newHealthWithClock(2, time.Minute, clock.Now)
+	runner := Runner{Policy: enabledPolicy(), Health: health, Clock: clock, FreshSuccess: true}
+
+	runner.Run(context.Background(), []int{0, 1}, func(a Attempt) Outcome {
+		// Another request finds the target unreachable while this one runs.
+		health.MarkFailure(a.Index)
+
+		return OutcomeDone
+	})
+
+	if health.Available(0) {
+		t.Fatal("a success that started before the failure cleared the cooldown")
+	}
+
+	// The pool fails open onto the target; this attempt started after the
+	// failure, so its success proves the target is back.
+	health.MarkFailure(1)
+
+	stats := runner.Run(context.Background(), []int{0, 1}, func(Attempt) Outcome {
+		return OutcomeDone
+	})
+
+	if stats.FinalIndex != 0 || !health.Available(0) {
+		t.Fatalf("a success after the failure must clear the cooldown: stats=%+v available=%v", stats, health.Available(0))
+	}
+}
+
+func TestHealthArrangeKeepsRelativeOrderAndInput(t *testing.T) {
+	clock := newFakeClock()
+	health := newHealthWithClock(5, time.Minute, clock.Now)
+	health.MarkFailure(1)
+	health.MarkFailure(3)
+
+	order := []int{4, 3, 2, 1, 0}
+
+	got := health.Arrange(order, func(i int) bool { return i == 0 })
+	if want := []int{4, 2, 3, 1, 0}; !slices.Equal(got, want) {
+		t.Fatalf("Arrange() = %v, want %v", got, want)
+	}
+
+	if !slices.Equal(order, []int{4, 3, 2, 1, 0}) {
+		t.Fatalf("Arrange() modified its input: %v", order)
+	}
+}
+
+// With failover enabled Arrange runs for every request, so the healthy case
+// must hand the order back untouched.
+func TestHealthArrangeHealthyPoolDoesNotAllocate(t *testing.T) {
+	health := NewHealth(4, time.Minute)
+	order := []int{2, 3, 0, 1}
+	notDown := func(int) bool { return false }
+
+	if got := health.Arrange(order, notDown); &got[0] != &order[0] || len(got) != len(order) {
+		t.Fatalf("healthy Arrange() = %v, want the input slice", got)
+	}
+
+	if allocs := testing.AllocsPerRun(200, func() { _ = health.Arrange(order, notDown) }); allocs != 0 {
+		t.Fatalf("healthy Arrange() allocates %v times per call, want 0", allocs)
+	}
+}
+
 func TestHealthNilAndDisabled(t *testing.T) {
 	if NewHealth(3, 0) != nil {
 		t.Fatal("zero cooldown must disable health tracking")

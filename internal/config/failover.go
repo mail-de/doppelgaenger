@@ -53,7 +53,8 @@ type FailoverConfig struct {
 	// no budget beyond the attempt count and the request deadline.
 	MaxWait time.Duration `mapstructure:"max_wait"`
 	// Cooldown moves a target to the end of the candidate order after a
-	// connect failure. 0 disables the cooldown.
+	// connect failure. 0 disables the cooldown. The least_conn selection mode
+	// requires it and applies it even when Enabled is false.
 	Cooldown time.Duration `mapstructure:"cooldown"`
 	// AttemptTimeout bounds one gRPC stream-creation attempt. HTTP uses
 	// upstream_http_dial_timeout and upstream_http_tls_handshake_timeout.
@@ -96,7 +97,44 @@ func normalizeFailoverConfig(cfg *Config) error {
 		return err
 	}
 
-	return validateFailoverConfig(cfg.Protocol, failoverShadowKey, cfg.ShadowFailover)
+	if err := validateFailoverConfig(cfg.Protocol, failoverShadowKey, cfg.ShadowFailover); err != nil {
+		return err
+	}
+
+	return validateLeastConnCooldown(*cfg)
+}
+
+// validateLeastConnCooldown rejects least_conn without a cooldown. An
+// unreachable backend has no request in flight, so only the cooldown keeps it
+// from being the first choice of every request. The selection modes must be
+// normalized before this runs.
+func validateLeastConnCooldown(cfg Config) error {
+	pools := []struct {
+		modeKey     string
+		mode        string
+		failoverKey string
+		cooldown    time.Duration
+	}{
+		{"primary_selection_mode", cfg.PrimarySelectionMode, failoverPrimaryKey, cfg.PrimaryFailover.Cooldown},
+		{"shadow_selection_mode", cfg.ShadowSelectionMode, failoverShadowKey, cfg.ShadowFailover.Cooldown},
+	}
+
+	switch cfg.Protocol {
+	case protocolHTTP:
+	case protocolGRPC:
+		pools[0].modeKey, pools[0].mode = "primary_grpc_selection_mode", cfg.PrimaryGRPCSelectionMode
+		pools[1].modeKey, pools[1].mode = "shadow_grpc_selection_mode", cfg.ShadowGRPCSelectionMode
+	default:
+		return nil
+	}
+
+	for _, pool := range pools {
+		if pool.mode == selectionLeastConn && pool.cooldown <= 0 {
+			return fmt.Errorf("%s.cooldown must be > 0 when %s is %s", pool.failoverKey, pool.modeKey, selectionLeastConn)
+		}
+	}
+
+	return nil
 }
 
 func validateFailoverConfig(protocol, field string, failover FailoverConfig) error {

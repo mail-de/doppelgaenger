@@ -160,3 +160,103 @@ func expectLoadErrorContains(t *testing.T, configContent []byte, want string) {
 		t.Fatalf("load error %q does not contain %q", err, want)
 	}
 }
+
+func TestLoadSelectionModeLeastConn(t *testing.T) {
+	loaded := loadTestConfig(t, []byte(`
+protocol: http
+primary_base_urls:
+  - "https://primary-a.example.com"
+  - "https://primary-b.example.com"
+primary_selection_mode: " Least_Conn "
+shadow_selection_mode: "least_conn"
+`))
+
+	if loaded.PrimarySelectionMode != selectionLeastConn || loaded.ShadowSelectionMode != selectionLeastConn {
+		t.Fatalf("selection modes = %q and %q, want least_conn", loaded.PrimarySelectionMode, loaded.ShadowSelectionMode)
+	}
+
+	loaded = loadTestConfig(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary-a.example.com:9443"
+  - address: "primary-b.example.com:9443"
+primary_grpc_selection_mode: "LEAST_CONN"
+shadow_grpc_selection_mode: "least_conn"
+`))
+
+	if loaded.PrimaryGRPCSelectionMode != selectionLeastConn || loaded.ShadowGRPCSelectionMode != selectionLeastConn {
+		t.Fatalf("gRPC selection modes = %q and %q, want least_conn", loaded.PrimaryGRPCSelectionMode, loaded.ShadowGRPCSelectionMode)
+	}
+}
+
+func TestLoadGRPCSelectionModeErrorNamesLeastConn(t *testing.T) {
+	expectLoadErrorContains(t, []byte(`
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary-a.example.com:9443"
+primary_grpc_selection_mode: "leastconn"
+`), "primary_grpc_selection_mode must be one of round_robin, source_ip_hash, or least_conn")
+}
+
+// least_conn depends on the cooldown: an unreachable backend has no request
+// in flight and would otherwise be the first choice of every request.
+func TestLoadLeastConnRequiresCooldown(t *testing.T) {
+	const (
+		httpBase = `
+protocol: http
+primary_base_urls:
+  - "https://primary-a.example.com"
+  - "https://primary-b.example.com"
+`
+		grpcBase = `
+protocol: grpc
+shadow_sample_percent: 0
+primary_grpc_targets:
+  - address: "primary-a.example.com:9443"
+  - address: "primary-b.example.com:9443"
+`
+		primaryNoCooldown = "primary_failover:\n  cooldown: \"0s\"\n"
+		shadowNoCooldown  = "shadow_failover:\n  cooldown: \"0s\"\n"
+	)
+
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "http primary",
+			yaml: httpBase + "primary_selection_mode: least_conn\n" + primaryNoCooldown,
+			want: "primary_failover.cooldown must be > 0 when primary_selection_mode is least_conn",
+		},
+		{
+			name: "http shadow",
+			yaml: httpBase + "shadow_selection_mode: least_conn\n" + shadowNoCooldown,
+			want: "shadow_failover.cooldown must be > 0 when shadow_selection_mode is least_conn",
+		},
+		{
+			name: "grpc primary",
+			yaml: grpcBase + "primary_grpc_selection_mode: least_conn\n" + primaryNoCooldown,
+			want: "primary_failover.cooldown must be > 0 when primary_grpc_selection_mode is least_conn",
+		},
+		{
+			name: "grpc shadow",
+			yaml: grpcBase + "shadow_grpc_selection_mode: least_conn\n" + shadowNoCooldown,
+			want: "shadow_failover.cooldown must be > 0 when shadow_grpc_selection_mode is least_conn",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectLoadErrorContains(t, []byte(tt.yaml), tt.want)
+		})
+	}
+
+	// Only the selection mode of the active protocol counts, and other modes
+	// keep working without a cooldown.
+	loadTestConfig(t, []byte(grpcBase+"primary_selection_mode: least_conn\n"+primaryNoCooldown))
+	loadTestConfig(t, []byte(httpBase+"primary_selection_mode: round_robin\n"+primaryNoCooldown))
+	loadTestConfig(t, []byte(httpBase+"primary_selection_mode: least_conn\n"+shadowNoCooldown))
+}

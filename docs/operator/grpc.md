@@ -55,9 +55,11 @@ disables Shadow, regardless of sampling, force metadata, or `shadow: always`.
 Client certificate and key must be configured together and require target TLS.
 
 `primary_grpc_selection_mode` and `shadow_grpc_selection_mode` default to
-`round_robin`; the other supported value is `source_ip_hash`. Invalid values
-are rejected. Source-IP selection falls back to round robin when the incoming
-peer IP is unavailable.
+`round_robin`; the other supported values are `source_ip_hash` and
+`least_conn`. Invalid values are rejected. Source-IP selection falls back to
+round robin when the incoming peer IP is unavailable. `least_conn` sends each
+call to the target with the fewest open streams and avoids targets that could
+not be reached recently. See [Backend selection](selection.md).
 
 `primary_failover` and `shadow_failover` can repeat upstream stream creation on
 the same or another target when it fails with `UNAVAILABLE` or exceeds

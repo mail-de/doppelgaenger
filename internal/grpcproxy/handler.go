@@ -119,6 +119,11 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 	}
 
 	primaryResult, primaryErr := forwardPrimaryStream(wrappedStream, opened.stream, cancel, shadow)
+
+	// The Primary exchange is over. Free its in-flight slot now so that the
+	// Shadow wait below does not count as load on the Primary target.
+	opened.release()
+
 	primaryResult.applyFailoverStats(opened)
 	h.finishRPCResult(wrappedStream.Context(), primaryCtx, primarySpan, fullMethod, rpcCtx, decision, target, shadowDecision, shadow, primaryResult, primaryErr)
 
@@ -401,7 +406,7 @@ func (h *Handler) startShadow(
 	}
 
 	pool := h.pools.Shadow
-	if target == nil || (target.Conn == nil && !pool.failoverActive()) {
+	if target == nil || (target.Conn == nil && !pool.failoverEngaged()) {
 		return newCompletedShadowForwarder(grpcStreamResult{
 			SkipReason: shadowSkipReasonTargetUnavailable,
 			Err:        shadowSkipReasonTargetUnavailable,

@@ -110,6 +110,8 @@ type requester struct {
 	obs      *observability.Observability
 	failover failoverRuntime
 	logger   *slog.Logger
+	// tracker is set when the selector balances on attempts in flight.
+	tracker AttemptTracker
 }
 
 type backendObservation struct {
@@ -142,13 +144,24 @@ func NewRequester(kind Kind, bases []*url.URL, selector Selector, upstreamTLS *t
 		}
 	}
 
-	p.failover.init(len(bases))
+	// A single backend leaves nothing to balance.
+	tracker, _ := p.selector.(AttemptTracker)
+	if len(bases) <= 1 {
+		tracker = nil
+	}
+
+	p.failover.init(len(bases), tracker != nil)
+
+	if tracker != nil {
+		tracker.Bind(len(bases), p.failover.health.Available)
+		p.tracker = tracker
+	}
 
 	return p
 }
 
 func (p *requester) Do(item Request) Result {
-	if p.failover.active {
+	if p.failover.engaged {
 		return p.doWithFailover(item)
 	}
 
