@@ -255,7 +255,8 @@ func serveGRPCAsync(
 	healthState.MarkNotReady()
 	logger.Error("grpcproxy failed", "err", err)
 
-	_ = shutdowner.Shutdown()
+	// A server that cannot serve is a failure, not a clean stop.
+	_ = shutdowner.Shutdown(fx.ExitCode(1))
 }
 
 func stopGRPCServer(ctx context.Context, grpcServer *grpc.Server) error {

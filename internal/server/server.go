@@ -165,7 +165,8 @@ func serveHTTP(
 		healthState.MarkNotReady()
 		logger.Error("server failed", "err", err)
 
-		_ = shutdowner.Shutdown()
+		// A server that cannot serve is a failure, not a clean stop.
+		_ = shutdowner.Shutdown(fx.ExitCode(1))
 	}
 }
 

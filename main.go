@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+	"go.uber.org/dig"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
@@ -60,10 +62,66 @@ func main() {
 		}
 	}
 
-	newApp().Run()
+	var logger *slog.Logger
+
+	if code := runApp(newApp(&logger), &logger, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
 }
 
-func newApp() *fx.App {
+// runApp starts the application, waits until it is asked to stop, and shuts
+// it down. It returns the process exit code.
+//
+// Fx reports a failed start or stop only to its event logger, which is
+// disabled here to keep the dependency wiring out of the logs. Without this
+// function the process would end with exit code 1 and no word about why.
+func runApp(application *fx.App, logger **slog.Logger, stderr io.Writer) int {
+	startCtx, cancelStart := context.WithTimeout(context.Background(), application.StartTimeout())
+	defer cancelStart()
+
+	if err := application.Start(startCtx); err != nil {
+		reportFailure(*logger, stderr, "startup failed", err)
+
+		return 1
+	}
+
+	signal := <-application.Wait()
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), application.StopTimeout())
+	defer cancelStop()
+
+	if err := application.Stop(stopCtx); err != nil {
+		reportFailure(*logger, stderr, "shutdown failed", err)
+
+		return 1
+	}
+
+	return signal.ExitCode
+}
+
+// reportFailure tells the operator why the application could not start or
+// stop. It uses the application logger, so the record has the configured
+// format. Without a logger the configuration itself could not be loaded, and
+// the reason goes to stderr as plain text.
+//
+// Only the cause is reported. The dependency path that Fx wraps around it
+// names internal constructors and says nothing an operator can act on.
+func reportFailure(logger *slog.Logger, stderr io.Writer, message string, err error) {
+	cause := dig.RootCause(err)
+
+	if logger != nil {
+		logger.Error(message, "err", cause)
+
+		return
+	}
+
+	_, _ = fmt.Fprintf(stderr, "doppelgaenger: %s: %v\n", message, cause)
+}
+
+// newApp wires the application. logger receives the application logger as
+// soon as the configuration is loaded, so that a later startup failure can be
+// reported through it.
+func newApp(logger **slog.Logger) *fx.App {
 	return fx.New(
 		fx.WithLogger(func() fxevent.Logger {
 			return fxevent.NopLogger
@@ -95,6 +153,7 @@ func newApp() *fx.App {
 			grpcproxy.NewHandler,
 			grpcproxy.NewServer,
 		),
+		fx.Populate(logger),
 		fx.Invoke(server.RegisterHooks),
 		fx.Invoke(milterproxy.RegisterHooks),
 		fx.Invoke(grpcproxy.RegisterHooks),

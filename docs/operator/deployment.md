@@ -139,6 +139,11 @@ attempts graceful stop until its lifecycle context expires, and Milter closes
 the listener. Existing Milter connection goroutines are not centrally drained
 by the server object.
 
+A normal stop ends with exit code 0. The process ends with exit code 1 when it
+cannot start, when a protocol listener stops serving because of an error, or
+when the shutdown itself fails. The reason is logged in each case; see
+[Operations](operations.md#process-does-not-start).
+
 ## Certificates and secrets
 
 The local certificate recipe is in [`certs/README.md`](../../certs/README.md).

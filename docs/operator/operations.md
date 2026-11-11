@@ -106,9 +106,21 @@ Shadow coverage.
 
 ### Process does not start
 
-Read the first configuration or listener error. Typical causes are a missing
-file, incomplete TLS pair, invalid rule regex, missing required backend, port
-collision, or inaccessible certificate inside a chroot/container.
+A failed start ends with exit code 1 and names the reason:
+
+- Before the configuration is loaded, as a plain line on standard error:
+  `doppelgaenger: startup failed: <reason>`.
+- Afterwards, as a `startup failed` record at `ERROR` level in the configured
+  log format. In HTTP mode a listener that cannot be opened is reported as
+  `server failed`.
+
+Typical causes are a missing file, incomplete TLS pair, invalid rule regex,
+missing required backend, port collision, or inaccessible certificate inside a
+chroot/container.
+
+The bundled systemd unit restarts the service after a failure. A start that
+keeps failing is therefore retried every two seconds;
+`journalctl -u doppelgaenger.service` shows the reason of each attempt.
 
 ### Readiness is missing
 
