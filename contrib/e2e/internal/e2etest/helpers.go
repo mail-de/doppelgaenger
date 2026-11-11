@@ -13,19 +13,46 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-const waitTimeout = 15 * time.Second
+const (
+	waitTimeout = 15 * time.Second
+
+	// freeAddrAttempts bounds the search for a port that was not handed out
+	// before.
+	freeAddrAttempts = 100
+
+	// logTailBytes is how much of a process log a failed test prints.
+	logTailBytes = 4096
+)
+
+var (
+	stateMu sync.Mutex
+
+	// handedOut holds every address FreeAddr has returned in this process.
+	handedOut = map[string]struct{}{}
+
+	// started holds the processes of each running test.
+	started = map[*testing.T][]*Process{}
+)
 
 // Process wraps a started E2E process.
 type Process struct {
 	Name string
 
-	cmd      *exec.Cmd
-	done     chan error
-	log      *os.File
+	cmd     *exec.Cmd
+	logPath string
+	log     *os.File
+
+	// exited is closed when the process has ended; exitErr is valid then.
+	exited  chan struct{}
+	exitErr error
+
+	// stopping reports that the test asked the process to end.
+	stopping atomic.Bool
 	stopOnce sync.Once
 }
 
@@ -62,8 +89,36 @@ func RepoRoot(t *testing.T) string {
 	}
 }
 
-// FreeAddr returns a currently free loopback TCP address.
+// FreeAddr returns a currently free loopback TCP address that this test
+// process has not handed out before.
+//
+// The port is found by listening on port 0 and closing the listener again.
+// Linux picks such ports at random from a few thousand candidates, so two
+// calls can return the same port. Two processes of one test would then be told
+// to listen on the same address: the second one fails to start, while a TCP
+// readiness check for it still reaches the first.
 func FreeAddr(t *testing.T) string {
+	t.Helper()
+
+	for range freeAddrAttempts {
+		addr := probeFreeAddr(t)
+
+		stateMu.Lock()
+		_, used := handedOut[addr]
+		handedOut[addr] = struct{}{}
+		stateMu.Unlock()
+
+		if !used {
+			return addr
+		}
+	}
+
+	t.Fatalf("allocate TCP port: no unused port after %d attempts", freeAddrAttempts)
+
+	return ""
+}
+
+func probeFreeAddr(t *testing.T) string {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -109,6 +164,10 @@ func WriteFile(t *testing.T, path, content string) {
 }
 
 // Start starts a long-running E2E process and writes combined logs to logPath.
+//
+// The process is stopped when the test ends, also when the test fails before
+// it could arrange that itself. A failed test prints the end of the log, and
+// waiting with WaitCondition fails at once when the process has exited.
 func Start(t *testing.T, name, logPath string, env []string, binary string, args ...string) *Process {
 	t.Helper()
 
@@ -128,17 +187,72 @@ func Start(t *testing.T, name, logPath string, env []string, binary string, args
 	}
 
 	process := &Process{
-		Name: name,
-		cmd:  cmd,
-		done: make(chan error, 1),
-		log:  logFile,
+		Name:    name,
+		cmd:     cmd,
+		logPath: logPath,
+		log:     logFile,
+		exited:  make(chan struct{}),
 	}
 
 	go func() {
-		process.done <- cmd.Wait()
+		process.exitErr = cmd.Wait()
+		close(process.exited)
 	}()
 
+	stateMu.Lock()
+	started[t] = append(started[t], process)
+	stateMu.Unlock()
+
+	t.Cleanup(func() {
+		process.Stop(t)
+
+		stateMu.Lock()
+		delete(started, t)
+		stateMu.Unlock()
+
+		if t.Failed() {
+			t.Logf("%s log, last %d bytes:\n%s", name, logTailBytes, process.logTail())
+		}
+	})
+
 	return process
+}
+
+// exitedProcess returns a process of the test that ended although the test
+// did not stop it, or nil.
+func exitedProcess(t *testing.T) *Process {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+
+	for _, process := range started[t] {
+		select {
+		case <-process.exited:
+			if !process.stopping.Load() {
+				return process
+			}
+		default:
+		}
+	}
+
+	return nil
+}
+
+// logTail returns the end of the process log.
+func (p *Process) logTail() string {
+	content, err := os.ReadFile(p.logPath)
+	if err != nil {
+		return fmt.Sprintf("(log unavailable: %v)", err)
+	}
+
+	if len(content) > logTailBytes {
+		content = content[len(content)-logTailBytes:]
+	}
+
+	if len(content) == 0 {
+		return "(empty)"
+	}
+
+	return string(content)
 }
 
 // Stop terminates a process and waits for it to exit.
@@ -150,12 +264,14 @@ func (p *Process) Stop(t *testing.T) {
 	}
 
 	p.stopOnce.Do(func() {
+		p.stopping.Store(true)
+
 		_ = p.cmd.Process.Signal(os.Interrupt)
 		select {
-		case <-p.done:
+		case <-p.exited:
 		case <-time.After(5 * time.Second):
 			_ = p.cmd.Process.Kill()
-			<-p.done
+			<-p.exited
 		}
 
 		if p.log != nil {
@@ -231,7 +347,9 @@ func MustFileNotContain(t *testing.T, path, fragment string) {
 	}
 }
 
-// WaitCondition waits for a condition to become true.
+// WaitCondition waits for a condition to become true. It gives up at once
+// when a process of the test has exited on its own: the condition would only
+// time out, and the process log says why.
 func WaitCondition(t *testing.T, label string, condition func() bool) {
 	t.Helper()
 
@@ -239,6 +357,10 @@ func WaitCondition(t *testing.T, label string, condition func() bool) {
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
+		}
+
+		if process := exitedProcess(t); process != nil {
+			t.Fatalf("%s exited while waiting for %s: %v", process.Name, label, process.exitErr)
 		}
 
 		time.Sleep(100 * time.Millisecond)
