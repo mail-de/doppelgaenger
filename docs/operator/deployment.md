@@ -6,7 +6,7 @@ not a production topology.
 
 ## Build the binary
 
-The project requires Go 1.27.3 or later and uses the vendored module tree.
+The project requires Go 1.27.4 or later and uses the vendored module tree.
 
 ```sh
 make build

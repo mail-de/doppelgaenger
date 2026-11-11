@@ -32,7 +32,7 @@ For a guided first run, use one of the small
 
 ## Minimal local run
 
-The repository uses vendored Go modules and requires Go 1.27.3 or later.
+The repository uses vendored Go modules and requires Go 1.27.4 or later.
 
 ```sh
 make build
