@@ -84,6 +84,10 @@ type Response struct {
 	Actions  []Action
 	Raw      []byte
 	RawTrace []string
+	// Attempts is the number of backend attempts; 0 when not reported.
+	Attempts int
+	// FailoverFrom is the first-choice backend when failover selected another one.
+	FailoverFrom string
 }
 
 // CompareResult captures protocol-level comparison details.

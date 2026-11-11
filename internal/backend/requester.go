@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -72,6 +73,11 @@ type Result struct {
 	Kind      Kind
 	Selected  string
 	Status    int
+	// Attempts is the number of backend attempts made; 1 without failover.
+	Attempts int
+	// FailoverFrom is the redacted first-choice backend when the final
+	// attempt used a different backend.
+	FailoverFrom string
 }
 
 // HTTPClient is the minimal interface required from http.Client.
@@ -102,6 +108,8 @@ type requester struct {
 	kind     Kind
 	maxBody  int64
 	obs      *observability.Observability
+	failover failoverRuntime
+	logger   *slog.Logger
 }
 
 type backendObservation struct {
@@ -112,14 +120,14 @@ type backendObservation struct {
 }
 
 // NewRequester initializes a direct backend requester.
-func NewRequester(kind Kind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, maxBody int64, clientCfg HTTPClientConfig, obs *observability.Observability) Requester {
+func NewRequester(kind Kind, bases []*url.URL, selector Selector, upstreamTLS *tls.Config, maxBody int64, clientCfg HTTPClientConfig, obs *observability.Observability, opts ...RequesterOption) Requester {
 	if len(bases) > 1 && selector == nil {
 		selector = &RoundRobinSelector{}
 	}
 
 	clientCfg = normalizeHTTPClientConfig(clientCfg)
 
-	return &requester{
+	p := &requester{
 		kind:     kind,
 		bases:    bases,
 		selector: selector,
@@ -127,9 +135,23 @@ func NewRequester(kind Kind, bases []*url.URL, selector Selector, upstreamTLS *t
 		maxBody:  maxBody,
 		obs:      obs,
 	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+
+	p.failover.init(len(bases))
+
+	return p
 }
 
 func (p *requester) Do(item Request) Result {
+	if p.failover.active {
+		return p.doWithFailover(item)
+	}
+
 	start := time.Now()
 
 	ctx := requestContext(item)
@@ -189,6 +211,13 @@ func (p *requester) newBackendRequest(ctx context.Context, item Request, base *u
 }
 
 func (p *requester) executeRequest(req *http.Request, item Request, selected string, start time.Time, observation *backendObservation) Result {
+	result := p.executeRequestOnce(req, item, selected, start, observation)
+	result.Attempts = 1
+
+	return result
+}
+
+func (p *requester) executeRequestOnce(req *http.Request, item Request, selected string, start time.Time, observation *backendObservation) Result {
 	resp, err := p.client.Do(req)
 	if err != nil {
 		observation.err = err
@@ -303,22 +332,32 @@ func (p *requester) startBackendSpan(ctx context.Context, item Request) (context
 }
 
 func (p *requester) selectBase(item Request) *url.URL {
+	idx := p.selectIndex(item)
+	if idx < 0 {
+		return nil
+	}
+
+	return p.bases[idx]
+}
+
+// selectIndex returns the selected backend index, or -1 without backends.
+func (p *requester) selectIndex(item Request) int {
 	switch len(p.bases) {
 	case 0:
-		return nil
+		return -1
 	case 1:
-		return p.bases[0]
+		return 0
 	default:
 		if p.selector == nil {
-			return p.bases[0]
+			return 0
 		}
 
 		idx := p.selector.Select(item, len(p.bases))
 		if idx < 0 || idx >= len(p.bases) {
-			return p.bases[0]
+			return 0
 		}
 
-		return p.bases[idx]
+		return idx
 	}
 }
 

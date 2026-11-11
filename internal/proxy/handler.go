@@ -497,7 +497,7 @@ func (h *Handler) callPrimary(
 	}()
 
 	if err := primarySession.Send(event); err != nil {
-		h.failPrimaryRequest(c, err, request, traceID, corrID, outcome, spanErr, 0)
+		h.failPrimaryRequest(c, err, request, traceID, corrID, outcome, spanErr, 0, 0)
 
 		return protocol.Response{}, false
 	}
@@ -508,7 +508,7 @@ func (h *Handler) callPrimary(
 	}
 
 	if primaryRes.Err != nil {
-		h.failPrimaryRequest(c, primaryRes.Err, request, traceID, corrID, outcome, spanErr, primaryRes.Duration.Milliseconds())
+		h.failPrimaryRequest(c, primaryRes.Err, request, traceID, corrID, outcome, spanErr, primaryRes.Duration.Milliseconds(), primaryRes.Attempts)
 
 		return protocol.Response{}, false
 	}
@@ -540,10 +540,11 @@ func (h *Handler) failPrimaryRequest(
 	outcome *string,
 	spanErr *error,
 	durationMillis int64,
+	attempts int,
 ) {
 	*outcome = observability.OutcomePrimaryError
 	*spanErr = err
-	h.logger.Error("primary_request_failed",
+	args := []any{
 		"req_id", request.reqID,
 		"trace_id", traceID,
 		"x_request_id", corrID,
@@ -552,7 +553,15 @@ func (h *Handler) failPrimaryRequest(
 		"path", request.path,
 		"err", err.Error(),
 		"dur_ms", durationMillis,
-	)
+	}
+
+	// Attempts are only reported when failover made more than one, so the
+	// record is unchanged without failover.
+	if attempts > 1 {
+		args = append(args, "primary_attempts", attempts)
+	}
+
+	h.logger.Error("primary_request_failed", args...)
 	c.AbortWithStatus(http.StatusBadGateway)
 }
 
@@ -751,8 +760,25 @@ func (h *Handler) logHTTPResult(payload httpLogPayload) {
 	)
 }
 
+// failoverLogFields reports retry and failover details only when more than one
+// backend attempt was made, so log records stay unchanged without failover.
+func failoverLogFields(prefix string, response protocol.Response) slog.Attr {
+	if response.Attempts <= 1 {
+		return slog.Attr{}
+	}
+
+	attrs := []any{slog.Int(prefix+"_attempts", response.Attempts)}
+	if response.FailoverFrom != "" {
+		attrs = append(attrs, slog.String(prefix+"_failover_from", response.FailoverFrom))
+	}
+
+	return slog.Group("", attrs...)
+}
+
 func (h *Handler) httpResultLogger(payload httpLogPayload) *slog.Logger {
 	return h.logger.With(payload.requestFields, payload.requestJSONFields,
+		failoverLogFields("primary", payload.primaryRes),
+		failoverLogFields("shadow", payload.shadowRes),
 		logging.SelectedJSONFields("primary_response_json", h.cfg.LogFields.ResponseJSON, payload.primaryRes.Body),
 		logging.SelectedJSONFields("shadow_response_json", h.cfg.LogFields.ResponseJSON, payload.shadowRes.Body),
 		logging.SelectedFields("primary_response_headers", h.cfg.LogFields.ResponseHeaders, payload.primaryRes.Header.Values),

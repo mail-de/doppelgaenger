@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/failover"
 	"doppelgaenger/internal/logging"
 	"doppelgaenger/internal/observability"
 )
@@ -60,6 +61,7 @@ func newCompletedShadowForwarder(result grpcStreamResult) *shadowForwarder {
 func newShadowForwarder(
 	parent context.Context,
 	target *Target,
+	open streamOpener,
 	fullMethod string,
 	overlay map[string]string,
 	cfg config.Config,
@@ -85,7 +87,15 @@ func newShadowForwarder(
 		done:          make(chan struct{}),
 	}
 
-	go forwarder.run(shadowCtx, target, fullMethod, callOptions)
+	if open == nil {
+		open = func(ctx context.Context) openedStream {
+			stream, err := target.Conn.NewStream(ctx, genericStreamDesc(), fullMethod, callOptions...)
+
+			return openedStream{stream: stream, target: target, stats: failover.Stats{Attempts: 1}, release: noopRelease, err: err}
+		}
+	}
+
+	go forwarder.run(shadowCtx, open)
 
 	return forwarder
 }
@@ -170,15 +180,20 @@ func (s *shadowForwarder) Wait(timeout time.Duration) grpcStreamResult {
 	}
 }
 
-func (s *shadowForwarder) run(ctx context.Context, target *Target, fullMethod string, callOptions []grpc.CallOption) {
+func (s *shadowForwarder) run(ctx context.Context, open streamOpener) {
 	started := time.Now()
 	defer func() {
 		s.markDurationSince(started)
 		s.complete()
 	}()
 
-	shadow, err := target.Conn.NewStream(ctx, genericStreamDesc(), fullMethod, callOptions...)
-	if err != nil {
+	opened := open(ctx)
+	defer opened.release()
+
+	s.markAttempts(opened)
+
+	shadow := opened.stream
+	if err := opened.err; err != nil {
 		s.failStart(err)
 
 		return
@@ -274,6 +289,17 @@ func (s *shadowForwarder) failStart(err error) {
 
 	s.markResult(reason, err.Error())
 	s.Close()
+}
+
+func (s *shadowForwarder) markAttempts(opened openedStream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if opened.target != nil {
+		s.result.Selected = opened.target.Name
+	}
+
+	s.result.applyFailoverStats(opened)
 }
 
 func (s *shadowForwarder) markStarted() {

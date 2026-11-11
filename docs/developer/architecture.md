@@ -34,6 +34,12 @@ selected Shadow request in a goroutine with a context detached from client
 cancellation and bounded by `shadow_timeout`.
 
 HTTP target selection and upstream transport live under `internal/backend`.
+With failover enabled, the requester repeats an attempt only when the HTTP
+transport never handed out a connection for its last internal try (tracked with
+`httptrace`). For requests the transport itself may replay after sending (GET,
+HEAD, OPTIONS, TRACE, or an `Idempotency-Key` header), any earlier connection
+also makes the attempt final, because the transport's own replay may follow a
+delivered request.
 The protocol adapter owns request construction. The comparator registry allows
 a rule to choose header, JSON, or HTML comparison per request.
 
@@ -44,6 +50,14 @@ need generated stubs or descriptors. It selects a Primary target, creates the
 upstream stream, and forwards client and server messages. A Shadow forwarder
 receives request messages through a bounded queue and collects only the state
 needed by the configured comparator.
+
+With failover enabled, only upstream stream creation is repeated. No client
+message is read before the stream exists, and stream-creation errors precede
+the request headers, so a repeated attempt can never execute a method twice.
+
+The protocol-neutral attempt engine (candidate order, backoff, budget, and
+passive cooldown) lives in `internal/failover`; the HTTP requester and the gRPC
+target pools supply the protocol-specific safety classification.
 
 Primary response headers, messages, trailers, and status remain client-visible.
 The Shadow stream is observed separately. OIDC token injection is a Primary

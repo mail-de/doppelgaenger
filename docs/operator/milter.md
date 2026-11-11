@@ -43,6 +43,9 @@ shadow_burst: 400
 Milter mode currently uses plaintext TCP. HTTP TLS fields and gRPC TLS fields do
 not add TLS to the Milter listener or backends.
 
+Retry and failover (`primary_failover`, `shadow_failover`) are not available in
+Milter mode; enabling them is a startup error.
+
 There is no Milter force field and no per-command rule list. Sampling and the
 rate limiter decide once when a client connection is accepted. If that decision
 is Primary-only, no Shadow session is opened for the connection.

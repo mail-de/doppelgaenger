@@ -38,6 +38,11 @@ startup error.
 `source_ip_hash` removes the client port before hashing. If no usable client IP
 is present, selection falls back to the selector's normal behavior.
 
+`primary_failover` and `shadow_failover` can repeat a request on the same or
+another backend when no connection could be established. Only connect-phase
+failures are repeated, never HTTP statuses or failures after the request was
+sent. See [Retry and failover](failover.md).
+
 ## Upstream transport
 
 | Key | Default | Meaning |

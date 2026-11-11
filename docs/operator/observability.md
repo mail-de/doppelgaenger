@@ -52,6 +52,7 @@ registered.
 | `doppelgaenger_ingress_request_duration_seconds` | the same labels |
 | `doppelgaenger_backend_requests_total` | `protocol`, `target`, `method`, `status`, `result` |
 | `doppelgaenger_backend_request_duration_seconds` | the same labels |
+| `doppelgaenger_backend_retries_total` | `protocol`, `target`, `result` (`retry`, `failover`, `exhausted`) |
 | `doppelgaenger_comparisons_total` | `protocol`, `result` |
 | `doppelgaenger_observability_startups_total` | `result` |
 | `doppelgaenger_observability_shutdowns_total` | `result` |
@@ -61,6 +62,9 @@ registered.
 The two duration series are histograms. `method` is an HTTP method, a full gRPC
 method, or a one-byte Milter command depending on `protocol`. Backend `target`
 is `primary` or `shadow`, not a configured host name.
+
+The retry counter only moves when `primary_failover` or `shadow_failover` is
+enabled; see [Retry and failover](failover.md#observability).
 
 Comparison results use `same`, `diff`, `error`, or `skipped`. Ingress outcomes
 include `ok`, `bad_request`, `primary_error`, `timeout`, and `error` where the
@@ -130,6 +134,10 @@ Each includes request identity, protocol-specific routing, Primary and Shadow
 outcomes, comparison state, and errors. HTTP logs expose `primary_status` and
 `shadow_status`; gRPC logs expose status, message count, message hash, and the
 comparison outcome; Milter logs expose terminal decisions and raw differences.
+With retry or failover enabled, HTTP and gRPC result logs add
+`primary_attempts`, `primary_failover_from`, `shadow_attempts`, and
+`shadow_failover_from` when more than one attempt was made, and each repeated
+attempt is logged as `backend_attempt_failed`.
 
 Startup, reload, listener, and failure messages are separate lifecycle logs.
 Build alerts on explicit fields and metric labels rather than matching free-form

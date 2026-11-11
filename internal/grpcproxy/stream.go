@@ -32,6 +32,10 @@ type grpcStreamResult struct {
 	Duration       time.Duration
 	Err            string
 	SkipReason     string
+	// Attempts is the number of stream-creation attempts; 0 when not started.
+	Attempts int
+	// FailoverFrom names the first-choice target when failover used another one.
+	FailoverFrom string
 }
 
 type primaryReceiveResult struct {

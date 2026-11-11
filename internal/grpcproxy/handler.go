@@ -91,7 +91,7 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 		return err
 	}
 
-	target := h.pickPrimaryTarget(wrappedStream.Context(), fullMethod, decision)
+	target, selection := h.pickPrimaryTarget(wrappedStream.Context(), fullMethod, decision)
 	if target == nil {
 		return missingPrimaryTargetError(rpcCtx)
 	}
@@ -107,12 +107,19 @@ func (h *Handler) Handle(_ any, stream grpc.ServerStream) error {
 	upstreamCtx, cancel := context.WithCancel(outgoingContext(primaryCtx, primaryMetadata, h.observability))
 	defer cancel()
 
-	primary, err := target.Conn.NewStream(upstreamCtx, genericStreamDesc(), fullMethod, h.callOptions...)
-	if err != nil {
-		return h.handlePrimaryStreamCreateError(wrappedStream.Context(), primaryCtx, primarySpan, fullMethod, rpcCtx, decision, target, shadowDecision, shadow, err)
+	opened := h.openPrimaryStream(upstreamCtx, primarySpan, rpcCtx, selection, fullMethod)
+	defer opened.release()
+
+	if opened.target != nil {
+		target = opened.target
 	}
 
-	primaryResult, primaryErr := forwardPrimaryStream(wrappedStream, primary, cancel, shadow)
+	if opened.err != nil {
+		return h.handlePrimaryStreamCreateError(wrappedStream.Context(), primaryCtx, primarySpan, fullMethod, rpcCtx, decision, target, shadowDecision, shadow, opened)
+	}
+
+	primaryResult, primaryErr := forwardPrimaryStream(wrappedStream, opened.stream, cancel, shadow)
+	primaryResult.applyFailoverStats(opened)
 	h.finishRPCResult(wrappedStream.Context(), primaryCtx, primarySpan, fullMethod, rpcCtx, decision, target, shadowDecision, shadow, primaryResult, primaryErr)
 
 	return primaryErr
@@ -192,11 +199,11 @@ func (h *Handler) prepareShadow(
 	rpcCtx *grpcRPCContext,
 ) (grpcShadowPolicyDecision, *shadowForwarder) {
 	shadowDecision := h.shouldShadow(ctx, decision)
-	shadowTarget := h.pickShadowTarget(ctx, fullMethod, decision, shadowDecision)
+	shadowTarget, shadowSelection := h.pickShadowTarget(ctx, fullMethod, decision, shadowDecision)
 	rpcCtx.shadowEnabled = shadowDecision.doShadow
 	rpcCtx.shadowStarted = shadowTarget != nil && shadowTarget.Conn != nil
 
-	return shadowDecision, h.startShadow(ctx, fullMethod, decision, shadowDecision, shadowTarget)
+	return shadowDecision, h.startShadow(ctx, fullMethod, decision, shadowDecision, shadowTarget, shadowSelection, rpcCtx.reqID)
 }
 
 func (h *Handler) handlePrimaryStreamCreateError(
@@ -209,13 +216,14 @@ func (h *Handler) handlePrimaryStreamCreateError(
 	target *Target,
 	shadowDecision grpcShadowPolicyDecision,
 	shadow *shadowForwarder,
-	err error,
+	opened openedStream,
 ) error {
 	shadow.Close()
 
-	primaryErr := primaryStreamError("create primary stream", err)
+	primaryErr := primaryStreamError("create primary stream", opened.err)
 	primaryResult := grpcStreamResult{MessageHash: emptyMessageHash()}
 	primaryResult.setError(primaryErr)
+	primaryResult.applyFailoverStats(opened)
 
 	h.finishRPCResult(streamCtx, primaryCtx, primarySpan, fullMethod, rpcCtx, decision, target, shadowDecision, shadow, primaryResult, primaryErr)
 
@@ -256,11 +264,15 @@ func (h *Handler) resolve(fullMethod string) (Decision, error) {
 	return h.resolver.Resolve(fullMethod)
 }
 
-func (h *Handler) pickPrimaryTarget(ctx context.Context, fullMethod string, decision Decision) *Target {
+func (h *Handler) pickPrimaryTarget(ctx context.Context, fullMethod string, decision Decision) (*Target, targetSelection) {
 	if h == nil || h.pools == nil || h.pools.Primary == nil {
-		return nil
+		return nil, targetSelection{index: -1}
 	}
 
+	return h.pools.Primary.selectTarget(requestInfo(ctx, fullMethod, decision))
+}
+
+func requestInfo(ctx context.Context, fullMethod string, decision Decision) RequestInfo {
 	info := RequestInfo{
 		FullMethod: fullMethod,
 		Service:    decision.Service,
@@ -272,7 +284,7 @@ func (h *Handler) pickPrimaryTarget(ctx context.Context, fullMethod string, deci
 		info.PeerIP = parsePeerIP(info.PeerAddr)
 	}
 
-	return h.pools.Primary.Pick(info)
+	return info
 }
 
 func genericStreamDesc() *grpc.StreamDesc {
@@ -367,23 +379,12 @@ func (h *Handler) randIntn(n int) int {
 	return h.rng.Intn(n)
 }
 
-func (h *Handler) pickShadowTarget(ctx context.Context, fullMethod string, decision Decision, shadow grpcShadowPolicyDecision) *Target {
+func (h *Handler) pickShadowTarget(ctx context.Context, fullMethod string, decision Decision, shadow grpcShadowPolicyDecision) (*Target, targetSelection) {
 	if !shadow.doShadow || h == nil || h.pools == nil || h.pools.Shadow == nil {
-		return nil
+		return nil, targetSelection{index: -1}
 	}
 
-	info := RequestInfo{
-		FullMethod: fullMethod,
-		Service:    decision.Service,
-		Method:     decision.Method,
-	}
-
-	if peerInfo, ok := peer.FromContext(ctx); ok && peerInfo.Addr != nil {
-		info.PeerAddr = peerInfo.Addr.String()
-		info.PeerIP = parsePeerIP(info.PeerAddr)
-	}
-
-	return h.pools.Shadow.Pick(info)
+	return h.pools.Shadow.selectTarget(requestInfo(ctx, fullMethod, decision))
 }
 
 func (h *Handler) startShadow(
@@ -392,17 +393,20 @@ func (h *Handler) startShadow(
 	decision Decision,
 	shadow grpcShadowPolicyDecision,
 	target *Target,
+	selection targetSelection,
+	reqID uint64,
 ) *shadowForwarder {
 	if !shadow.doShadow {
 		return newCompletedShadowForwarder(grpcStreamResult{SkipReason: shadow.skipReason})
 	}
 
-	if target == nil || target.Conn == nil {
+	pool := h.pools.Shadow
+	if target == nil || (target.Conn == nil && !pool.failoverActive()) {
 		return newCompletedShadowForwarder(grpcStreamResult{
 			SkipReason: shadowSkipReasonTargetUnavailable,
 			Err:        shadowSkipReasonTargetUnavailable,
 		})
 	}
 
-	return newShadowForwarder(ctx, target, fullMethod, decision.ShadowMetadata, h.cfg, h.callOptions, h.observability)
+	return newShadowForwarder(ctx, target, h.shadowStreamOpener(pool, selection, fullMethod, reqID), fullMethod, decision.ShadowMetadata, h.cfg, h.callOptions, h.observability)
 }

@@ -197,3 +197,31 @@ func TestGRPCTraceMetadataUsesExtractedTraceContext(t *testing.T) {
 		t.Fatalf("expected x-trace-id %s, got %q", traceID, got)
 	}
 }
+
+func TestPrometheusBackendRetryCounter(t *testing.T) {
+	obs, err := New(config.Config{
+		Observability: config.ObservabilityConfig{PrometheusEnabled: true},
+	}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("new observability: %v", err)
+	}
+
+	obs.ObserveFailoverStats(context.Background(), "http", "primary", 1, 2, true)
+
+	w := httptest.NewRecorder()
+	obs.PrometheusHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	body := w.Body.String()
+	for _, want := range []string{
+		`doppelgaenger_backend_retries_total{protocol="http",result="retry",target="primary"} 1`,
+		`doppelgaenger_backend_retries_total{protocol="http",result="failover",target="primary"} 2`,
+		`doppelgaenger_backend_retries_total{protocol="http",result="exhausted",target="primary"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in metrics output, got %q", want, body)
+		}
+	}
+
+	var disabled *Observability
+	disabled.ObserveFailoverStats(context.Background(), "http", "primary", 1, 1, true)
+}

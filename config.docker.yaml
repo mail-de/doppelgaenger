@@ -107,6 +107,14 @@ shadow_base_urls:
 # Supported values: "round_robin", "source_ip_hash".
 shadow_selection_mode: "round_robin"
 
+# Retry & Failover Settings
+# ------------------------------------------------------------------------------
+# Connect-phase retry and failover; see config.yaml and docs/operator/failover.md.
+primary_failover:
+  enabled: false
+shadow_failover:
+  enabled: false
+
 # Shadow & Rate Limiting Settings
 # ------------------------------------------------------------------------------
 # shadow_sample_percent: percentage of traffic mirrored to shadow (0-100).

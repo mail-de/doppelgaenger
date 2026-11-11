@@ -162,6 +162,40 @@ shadow_base_urls:
 # Applies to: HTTP protocol.
 shadow_selection_mode: "round_robin"
 
+# Retry & Failover Settings
+# ------------------------------------------------------------------------------
+# primary_failover / shadow_failover: connect-phase retry and failover for one
+# backend pool. Only attempts that never reached a backend are repeated
+# (HTTP: no connection obtained; gRPC: stream creation UNAVAILABLE or
+# attempt_timeout), so non-idempotent requests are never executed twice.
+# HTTP statuses such as 502/503/504 and failures after a request was sent are
+# always final. enabled: false keeps the single-attempt behavior.
+# Applies to: HTTP and gRPC protocols. Rejected with protocol milter.
+# See docs/operator/failover.md.
+primary_failover:
+  enabled: false
+  max_targets: 0          # Distinct targets per round; 0 = all, 1 = retry only.
+  retries: 0              # Extra rounds after the first one (0-20).
+  backoff_initial: "100ms" # Delay before the first extra round.
+  backoff_multiplier: 2.0 # Exponential growth per round (>= 1).
+  backoff_max: "2s"       # Cap for a single delay.
+  backoff_jitter: 0.2     # +/- fraction applied to each delay (0-1).
+  max_wait: "5s"          # Total budget; no new attempt starts after it. 0 = no budget.
+  cooldown: "10s"         # Try a target last for this long after a connect failure. 0 = off.
+  attempt_timeout: "2s"   # gRPC only: max wait for one stream creation.
+
+shadow_failover:
+  enabled: false
+  max_targets: 0
+  retries: 0
+  backoff_initial: "100ms"
+  backoff_multiplier: 2.0
+  backoff_max: "2s"
+  backoff_jitter: 0.2
+  max_wait: "5s"
+  cooldown: "10s"
+  attempt_timeout: "2s"
+
 # root_ca: path to a common CA certificate for HTTP upstream backends.
 # Applies to: HTTP protocol.
 root_ca: ""

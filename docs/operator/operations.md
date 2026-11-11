@@ -121,6 +121,17 @@ on the protocol listener.
 503 means the Primary session could not be created. 502 means the Primary
 request/response failed after session creation. Check DNS, routing, TLS trust,
 protocol negotiation, and backend availability from the proxy environment.
+With `primary_failover` enabled, a 502 after a connect failure means every
+allowed attempt failed; `primary_attempts` in `primary_request_failed` shows how
+many were made.
+
+## Upgrading backends one at a time
+
+Enable `primary_failover` (and optionally `shadow_failover`) before a rolling
+backend upgrade so that requests selecting a stopped backend move to the
+remaining ones. Backends must shut down gracefully, because in-flight requests
+on a hard-killed backend are never repeated. Follow the recipe in
+[Retry and failover](failover.md#rolling-upgrade-recipe).
 
 ### gRPC is healthy but Shadow comparison errors
 

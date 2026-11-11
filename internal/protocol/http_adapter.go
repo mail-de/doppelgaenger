@@ -121,6 +121,9 @@ func (s *httpSession) Receive() (Response, error) {
 		Duration: res.Duration,
 		Err:      res.Err,
 		Decision: DecisionUnknown,
+
+		Attempts:     res.Attempts,
+		FailoverFrom: res.FailoverFrom,
 	}, res.Err
 }
 

@@ -51,7 +51,9 @@ func (h *Handler) logRPCResult(
 		logging.SelectedFields("shadow_trailer_metadata", h.cfg.LogFields.ResponseMetadata, shadowResult.Trailer.Get))
 	attrs = append(attrs, grpcShadowDecisionLogAttributes(shadowDecision, shadowResult, decision)...)
 	attrs = append(attrs, grpcPrimaryLogAttributes(primaryTarget, primaryResult)...)
+	attrs = append(attrs, grpcFailoverLogAttributes("primary", primaryResult)...)
 	attrs = append(attrs, grpcShadowResultLogAttributes(shadowResult)...)
+	attrs = append(attrs, grpcFailoverLogAttributes("shadow", shadowResult)...)
 	attrs = append(attrs, grpcCompareLogAttributes(compareResult)...)
 	h.logger.Log(context.Background(), level, "grpc_proxy", attrs...)
 }
@@ -111,6 +113,22 @@ func grpcPrimaryLogAttributes(primaryTarget *Target, primaryResult grpcStreamRes
 		"primary_message_hash", streamMessageHash(primaryResult),
 		"primary_dur_ms", durationMillis(primaryResult.Duration),
 	}
+}
+
+// grpcFailoverLogAttributes reports retry and failover details only when more
+// than one stream-creation attempt was made, so log records stay unchanged
+// without failover.
+func grpcFailoverLogAttributes(prefix string, result grpcStreamResult) []any {
+	if result.Attempts <= 1 {
+		return nil
+	}
+
+	attrs := []any{prefix + "_attempts", result.Attempts}
+	if result.FailoverFrom != "" {
+		attrs = append(attrs, prefix+"_failover_from", result.FailoverFrom)
+	}
+
+	return attrs
 }
 
 func grpcShadowResultLogAttributes(shadowResult grpcStreamResult) []any {

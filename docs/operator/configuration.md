@@ -45,6 +45,16 @@ The limiter is process-local. HTTP consumes a token for a sampled request,
 gRPC for a sampled RPC, and Milter for a sampled client connection. Forced HTTP
 and gRPC Shadow work bypasses the limiter. `shadow: always` does not bypass it.
 
+## Retry and failover
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `primary_failover` | disabled | Connect-phase retry and failover for the Primary pool in HTTP and gRPC mode. |
+| `shadow_failover` | disabled | The same for the Shadow pool. |
+
+Both blocks share one schema and are validated in every mode; enabling them in
+Milter mode is rejected. See [Retry and failover](failover.md).
+
 ## Logging
 
 | Key | Default | Applies to | Meaning |

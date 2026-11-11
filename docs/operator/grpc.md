@@ -59,6 +59,11 @@ Client certificate and key must be configured together and require target TLS.
 are rejected. Source-IP selection falls back to round robin when the incoming
 peer IP is unavailable.
 
+`primary_failover` and `shadow_failover` can repeat upstream stream creation on
+the same or another target when it fails with `UNAVAILABLE` or exceeds
+`attempt_timeout`. Once a stream exists, failures are final. See
+[Retry and failover](failover.md).
+
 ## Shadow runtime
 
 | Key | Default | Meaning |

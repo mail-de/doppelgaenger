@@ -106,6 +106,14 @@ type Config struct {
 	// Supported: round_robin, source_ip_hash.
 	ShadowSelectionMode string `mapstructure:"shadow_selection_mode"`
 
+	// PrimaryFailover configures connect-phase retry and failover for primary backends.
+	// Applies to: HTTP and gRPC protocols.
+	PrimaryFailover FailoverConfig `mapstructure:"primary_failover"`
+
+	// ShadowFailover configures connect-phase retry and failover for shadow backends.
+	// Applies to: HTTP and gRPC protocols.
+	ShadowFailover FailoverConfig `mapstructure:"shadow_failover"`
+
 	// ShadowRPS defines the maximum requests per second for the shadow backend (0 disables the limit).
 	ShadowRPS float64 `mapstructure:"shadow_rps"`
 
@@ -481,6 +489,7 @@ func setDefaults(v *viper.Viper) {
 	setHTTPDefaults(v)
 	setMilterDefaults(v)
 	setGRPCDefaults(v)
+	setFailoverDefaults(v)
 	setCompareDefaults(v)
 	setRuntimeDefaults(v)
 	setHeaderDefaults(v)
@@ -671,6 +680,10 @@ func validate(cfg *Config) error {
 	}
 
 	if err := normalizeHTTPTransportConfig(cfg); err != nil {
+		return err
+	}
+
+	if err := normalizeFailoverConfig(cfg); err != nil {
 		return err
 	}
 

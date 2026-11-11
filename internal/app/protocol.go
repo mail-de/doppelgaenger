@@ -4,6 +4,7 @@ package app
 import (
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 
 	"go.uber.org/fx"
 
@@ -26,6 +27,7 @@ type ProtocolAdapterDeps struct {
 	PrimaryTLS    *tls.Config                  `name:"primaryTLS"`
 	ShadowTLS     *tls.Config                  `name:"shadowTLS"`
 	Observability *observability.Observability `optional:"true"`
+	Logger        *slog.Logger                 `optional:"true"`
 }
 
 // NewProtocolAdapter constructs the protocol adapter selected by configuration.
@@ -45,8 +47,10 @@ func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.Adapter, error) {
 		}
 
 		return protocol.HTTPAdapter{
-			PrimaryRequester:      backend.NewRequester(backend.BackendPrimary, deps.Config.PrimaryBaseURLs, primarySelector, deps.PrimaryTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability),
-			ShadowRequester:       backend.NewRequester(backend.BackendShadow, deps.Config.ShadowBaseURLs, shadowSelector, deps.ShadowTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability),
+			PrimaryRequester: backend.NewRequester(backend.BackendPrimary, deps.Config.PrimaryBaseURLs, primarySelector, deps.PrimaryTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability,
+				backend.WithFailover(deps.Config.PrimaryFailover.Policy()), backend.WithLogger(deps.Logger)),
+			ShadowRequester: backend.NewRequester(backend.BackendShadow, deps.Config.ShadowBaseURLs, shadowSelector, deps.ShadowTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability,
+				backend.WithFailover(deps.Config.ShadowFailover.Policy()), backend.WithLogger(deps.Logger)),
 			PrimaryRequestHeaders: deps.Config.PrimaryRequestHeaders,
 			ShadowRequestHeaders:  deps.Config.ShadowRequestHeaders,
 		}, nil

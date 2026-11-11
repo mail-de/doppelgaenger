@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"doppelgaenger/internal/config"
+	"doppelgaenger/internal/failover"
 )
 
 // Target is one long-lived gRPC upstream connection.
@@ -28,6 +29,12 @@ type TargetPool struct {
 	targets []*Target
 	mode    string
 	next    atomic.Uint64
+
+	// policy enables connect-phase retry and failover; the zero value keeps
+	// the single-attempt behavior.
+	policy failover.Policy
+	health *failover.Health
+	clock  failover.Clock
 }
 
 // TargetPools groups primary and shadow upstream pools.
@@ -42,12 +49,12 @@ func NewTargetPools(cfg config.Config) (*TargetPools, error) {
 		return &TargetPools{}, nil
 	}
 
-	primary, err := newTargetPool(cfg.PrimaryGRPCTargets, cfg.PrimaryGRPCSelectionMode, cfg)
+	primary, err := newTargetPool(cfg.PrimaryGRPCTargets, cfg.PrimaryGRPCSelectionMode, cfg.PrimaryFailover.Policy(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("primary gRPC targets: %w", err)
 	}
 
-	shadow, err := newTargetPool(cfg.ShadowGRPCTargets, cfg.ShadowGRPCSelectionMode, cfg)
+	shadow, err := newTargetPool(cfg.ShadowGRPCTargets, cfg.ShadowGRPCSelectionMode, cfg.ShadowFailover.Policy(), cfg)
 	if err != nil {
 		_ = primary.Close()
 
@@ -57,7 +64,7 @@ func NewTargetPools(cfg config.Config) (*TargetPools, error) {
 	return &TargetPools{Primary: primary, Shadow: shadow}, nil
 }
 
-func newTargetPool(targets []config.GRPCTarget, mode string, cfg config.Config) (*TargetPool, error) {
+func newTargetPool(targets []config.GRPCTarget, mode string, policy failover.Policy, cfg config.Config) (*TargetPool, error) {
 	pool := &TargetPool{mode: mode}
 
 	for i, targetCfg := range targets {
@@ -70,6 +77,8 @@ func newTargetPool(targets []config.GRPCTarget, mode string, cfg config.Config) 
 
 		pool.targets = append(pool.targets, target)
 	}
+
+	pool.setFailoverPolicy(policy)
 
 	return pool, nil
 }

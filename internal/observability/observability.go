@@ -91,6 +91,13 @@ const (
 	// ResultTimeout labels backend work that exceeded its timeout.
 	ResultTimeout = "timeout"
 
+	// RetryResultRetry labels an extra attempt on the same backend target.
+	RetryResultRetry = "retry"
+	// RetryResultFailover labels an extra attempt on a different backend target.
+	RetryResultFailover = "failover"
+	// RetryResultExhausted labels a backend exchange whose connect attempts all failed.
+	RetryResultExhausted = "exhausted"
+
 	// StatusError labels backend requests that failed before a usable status was available.
 	StatusError = "error"
 	// StatusNone labels requests without a transport status.
@@ -139,6 +146,7 @@ type prometheusMetrics struct {
 	ingressDuration      *prometheus.HistogramVec
 	backendRequests      *prometheus.CounterVec
 	backendDuration      *prometheus.HistogramVec
+	backendRetries       *prometheus.CounterVec
 	comparisons          *prometheus.CounterVec
 	observabilityStarts  *prometheus.CounterVec
 	observabilityStops   *prometheus.CounterVec
@@ -151,6 +159,7 @@ type otelMetricInstruments struct {
 	ingressDuration      metric.Float64Histogram
 	backendRequests      metric.Int64Counter
 	backendDuration      metric.Float64Histogram
+	backendRetries       metric.Int64Counter
 	comparisons          metric.Int64Counter
 	callerIntrospections metric.Int64Counter
 	callerFlights        metric.Int64UpDownCounter
@@ -390,6 +399,10 @@ func (o *Observability) initializeOpenTelemetryInstruments() error {
 		return err
 	}
 
+	if instruments.backendRetries, err = o.meter.Int64Counter("doppelgaenger_backend_retries"); err != nil {
+		return err
+	}
+
 	if instruments.comparisons, err = o.meter.Int64Counter("doppelgaenger_comparisons"); err != nil {
 		return err
 	}
@@ -472,9 +485,22 @@ func newPrometheusMetrics(registry *prometheus.Registry, runtimeMetrics bool) *p
 		metrics.observabilityStarts,
 		metrics.observabilityStops,
 	)
+	registerBackendRetryMetrics(registry, metrics)
 	registerCallerIntrospectionMetrics(registry, metrics)
 
 	return metrics
+}
+
+func registerBackendRetryMetrics(registry *prometheus.Registry, metrics *prometheusMetrics) {
+	metrics.backendRetries = newCounterVec(
+		"doppelgaenger_backend_retries_total",
+		"Backend connect-phase retry and failover events by protocol, target, and result: retry, failover, or exhausted.",
+		LabelProtocol,
+		LabelTarget,
+		LabelResult,
+	)
+
+	registry.MustRegister(metrics.backendRetries)
 }
 
 func registerCallerIntrospectionMetrics(registry *prometheus.Registry, metrics *prometheusMetrics) {
@@ -912,6 +938,46 @@ func labelValuesAndAttributes(pairs ...string) ([]string, []attribute.KeyValue) 
 	}
 
 	return labels, attrs
+}
+
+// ObserveBackendRetry records one connect-phase retry or failover event.
+// result is one of RetryResultRetry, RetryResultFailover, or RetryResultExhausted.
+func (o *Observability) ObserveBackendRetry(ctx context.Context, protocol, target, result string) {
+	if o == nil {
+		return
+	}
+
+	if o.metrics != nil && o.metrics.backendRetries != nil {
+		o.metrics.backendRetries.WithLabelValues(protocol, target, result).Inc()
+	}
+
+	if o.otelMetrics != nil && o.otelMetrics.backendRetries != nil {
+		o.otelMetrics.backendRetries.Add(ctx, 1, metric.WithAttributes(
+			attribute.String(LabelProtocol, protocol),
+			attribute.String(LabelTarget, target),
+			attribute.String(LabelResult, result),
+		))
+	}
+}
+
+// ObserveFailoverStats records retry, failover, and exhaustion events for one
+// backend exchange.
+func (o *Observability) ObserveFailoverStats(ctx context.Context, protocol, target string, retries, failovers int, exhausted bool) {
+	if o == nil {
+		return
+	}
+
+	for range retries {
+		o.ObserveBackendRetry(ctx, protocol, target, RetryResultRetry)
+	}
+
+	for range failovers {
+		o.ObserveBackendRetry(ctx, protocol, target, RetryResultFailover)
+	}
+
+	if exhausted {
+		o.ObserveBackendRetry(ctx, protocol, target, RetryResultExhausted)
+	}
 }
 
 // ObserveComparison records the primary/shadow comparison result.

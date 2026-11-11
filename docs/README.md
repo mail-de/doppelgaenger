@@ -20,6 +20,8 @@ grouped by the task a reader is trying to complete.
   comparison modes, streaming, and OIDC client credentials
 - [Milter mode](operator/milter.md): session behavior, the fixed no-reply
   profile, asynchronous Shadow processing, and MTA integration boundaries
+- [Retry and failover](operator/failover.md): connect-phase retry, backoff,
+  failover between backends, cooldown, and rolling upgrades
 - [Deployment](operator/deployment.md): binary, Docker Compose, systemd socket
   activation, reload, shutdown, and local certificates
 - [Observability](operator/observability.md): readiness, logs, Prometheus,
