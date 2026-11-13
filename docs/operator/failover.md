@@ -84,7 +84,7 @@ shadow_failover:
 | `backoff_jitter` | `0.2` | Randomizes each delay by up to plus or minus this fraction, `0` to `1`. The result never exceeds `backoff_max`. |
 | `max_wait` | `5s` | Total budget measured from the first attempt. No new attempt or backoff starts once it would be exceeded. `0` removes this budget; the attempt count and the request deadline still apply. |
 | `cooldown` | `10s` | After a connect failure the target is tried last for this long. `0` disables the cooldown. The `least_conn` selection mode needs a value above `0` and applies it even while `enabled` is `false`; see [Backend selection](selection.md#unreachable-targets). |
-| `attempt_timeout` | `2s` | gRPC only: the longest time one stream creation may wait, for example for a host that accepts TCP but never answers. It does not limit the stream once it exists. If it expires in the instant the stream was created, the call fails with `UNAVAILABLE` and is not repeated. HTTP uses `upstream_http_dial_timeout` and `upstream_http_tls_handshake_timeout` instead. |
+| `attempt_timeout` | `2s` | gRPC only: the longest time one stream creation may wait, for example for a host that accepts TCP but never answers. It does not limit the stream once it exists. If it expires in the instant the stream was created, the call fails with `UNAVAILABLE` and is not repeated. HTTP uses the pool-specific dial timeout (falling back to `upstream_http_dial_timeout`) and `upstream_http_tls_handshake_timeout` instead. |
 
 All values are validated at startup, even when `enabled` is `false`. Durations
 must not exceed one hour. Enabling
@@ -162,7 +162,7 @@ depend on it.
 Without failures, failover adds no delay. With failures, the extra latency of
 one request is bounded by `max_wait` plus the connect time of the attempts that
 were already running when the budget was reached. A connect attempt takes up to
-`upstream_http_dial_timeout` plus `upstream_http_tls_handshake_timeout` in HTTP
+the effective pool-specific HTTP dial timeout plus `upstream_http_tls_handshake_timeout` in HTTP
 mode and up to `attempt_timeout` in gRPC mode. Refused connections fail within
 milliseconds; blackholed hosts take the full timeout. Size `max_wait` below the
 client's own timeout.
