@@ -126,6 +126,14 @@ type Config struct {
 	// Applies to: HTTP protocol.
 	UpstreamHTTPDialTimeout time.Duration `mapstructure:"upstream_http_dial_timeout"`
 
+	// PrimaryUpstreamHTTPDialTimeout overrides the shared TCP connect timeout for primary HTTP backends.
+	// Non-positive values inherit UpstreamHTTPDialTimeout. Applies to: HTTP protocol.
+	PrimaryUpstreamHTTPDialTimeout time.Duration `mapstructure:"primary_upstream_http_dial_timeout"`
+
+	// ShadowUpstreamHTTPDialTimeout overrides the shared TCP connect timeout for shadow HTTP backends.
+	// Non-positive values inherit UpstreamHTTPDialTimeout. Applies to: HTTP protocol.
+	ShadowUpstreamHTTPDialTimeout time.Duration `mapstructure:"shadow_upstream_http_dial_timeout"`
+
 	// UpstreamHTTPTLSHandshakeTimeout limits TLS handshake time to HTTPS backends.
 	// Applies to: HTTP protocol.
 	UpstreamHTTPTLSHandshakeTimeout time.Duration `mapstructure:"upstream_http_tls_handshake_timeout"`
@@ -519,6 +527,8 @@ func setHTTPDefaults(v *viper.Viper) {
 	v.SetDefault("shadow_burst", 400)
 	v.SetDefault("max_backend_body_bytes", 32*1024)
 	v.SetDefault("upstream_http_dial_timeout", 2*time.Second)
+	v.SetDefault("primary_upstream_http_dial_timeout", time.Duration(0))
+	v.SetDefault("shadow_upstream_http_dial_timeout", time.Duration(0))
 	v.SetDefault("upstream_http_tls_handshake_timeout", 5*time.Second)
 	v.SetDefault("upstream_http_response_header_timeout", 5*time.Second)
 	v.SetDefault("upstream_http_max_idle_conns", 1024)
@@ -742,6 +752,14 @@ func normalizeShadowConfig(cfg *Config) {
 func normalizeHTTPTransportConfig(cfg *Config) error {
 	if cfg.UpstreamHTTPDialTimeout <= 0 {
 		cfg.UpstreamHTTPDialTimeout = 2 * time.Second
+	}
+
+	if cfg.PrimaryUpstreamHTTPDialTimeout <= 0 {
+		cfg.PrimaryUpstreamHTTPDialTimeout = cfg.UpstreamHTTPDialTimeout
+	}
+
+	if cfg.ShadowUpstreamHTTPDialTimeout <= 0 {
+		cfg.ShadowUpstreamHTTPDialTimeout = cfg.UpstreamHTTPDialTimeout
 	}
 
 	if cfg.UpstreamHTTPTLSHandshakeTimeout <= 0 {

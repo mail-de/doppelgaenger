@@ -36,20 +36,12 @@ func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.Adapter, error) {
 	case protocolHTTP:
 		primarySelector := backend.NewSelector(deps.Config.PrimarySelectionMode)
 		shadowSelector := backend.NewSelector(deps.Config.ShadowSelectionMode)
-		clientCfg := backend.HTTPClientConfig{
-			DialTimeout:           deps.Config.UpstreamHTTPDialTimeout,
-			TLSHandshakeTimeout:   deps.Config.UpstreamHTTPTLSHandshakeTimeout,
-			ResponseHeaderTimeout: deps.Config.UpstreamHTTPResponseHeaderTimeout,
-			MaxIdleConns:          deps.Config.UpstreamHTTPMaxIdleConns,
-			MaxIdleConnsPerHost:   deps.Config.UpstreamHTTPMaxIdleConnsPerHost,
-			MaxConnsPerHost:       deps.Config.UpstreamHTTPMaxConnsPerHost,
-			Protocol:              deps.Config.UpstreamHTTPProtocol,
-		}
+		primaryClientCfg, shadowClientCfg := httpClientConfigs(deps.Config)
 
 		return protocol.HTTPAdapter{
-			PrimaryRequester: backend.NewRequester(backend.BackendPrimary, deps.Config.PrimaryBaseURLs, primarySelector, deps.PrimaryTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability,
+			PrimaryRequester: backend.NewRequester(backend.BackendPrimary, deps.Config.PrimaryBaseURLs, primarySelector, deps.PrimaryTLS, deps.Config.MaxBackendBodyBytes, primaryClientCfg, deps.Observability,
 				backend.WithFailover(deps.Config.PrimaryFailover.Policy()), backend.WithLogger(deps.Logger)),
-			ShadowRequester: backend.NewRequester(backend.BackendShadow, deps.Config.ShadowBaseURLs, shadowSelector, deps.ShadowTLS, deps.Config.MaxBackendBodyBytes, clientCfg, deps.Observability,
+			ShadowRequester: backend.NewRequester(backend.BackendShadow, deps.Config.ShadowBaseURLs, shadowSelector, deps.ShadowTLS, deps.Config.MaxBackendBodyBytes, shadowClientCfg, deps.Observability,
 				backend.WithFailover(deps.Config.ShadowFailover.Policy()), backend.WithLogger(deps.Logger)),
 			PrimaryRequestHeaders: deps.Config.PrimaryRequestHeaders,
 			ShadowRequestHeaders:  deps.Config.ShadowRequestHeaders,
@@ -64,6 +56,24 @@ func NewProtocolAdapter(deps ProtocolAdapterDeps) (protocol.Adapter, error) {
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", deps.Config.Protocol)
 	}
+}
+
+// httpClientConfigs keeps transport settings common while allowing independent
+// connect deadlines. Config normalization resolves absent overrides first.
+func httpClientConfigs(cfg config.Config) (backend.HTTPClientConfig, backend.HTTPClientConfig) {
+	primary := backend.HTTPClientConfig{
+		DialTimeout:           cfg.PrimaryUpstreamHTTPDialTimeout,
+		TLSHandshakeTimeout:   cfg.UpstreamHTTPTLSHandshakeTimeout,
+		ResponseHeaderTimeout: cfg.UpstreamHTTPResponseHeaderTimeout,
+		MaxIdleConns:          cfg.UpstreamHTTPMaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.UpstreamHTTPMaxIdleConnsPerHost,
+		MaxConnsPerHost:       cfg.UpstreamHTTPMaxConnsPerHost,
+		Protocol:              cfg.UpstreamHTTPProtocol,
+	}
+	shadow := primary
+	shadow.DialTimeout = cfg.ShadowUpstreamHTTPDialTimeout
+
+	return primary, shadow
 }
 
 // ProtocolComparatorDeps contains dependencies for constructing the active comparator.

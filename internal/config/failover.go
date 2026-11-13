@@ -57,7 +57,7 @@ type FailoverConfig struct {
 	// requires it and applies it even when Enabled is false.
 	Cooldown time.Duration `mapstructure:"cooldown"`
 	// AttemptTimeout bounds one gRPC stream-creation attempt. HTTP uses
-	// upstream_http_dial_timeout and upstream_http_tls_handshake_timeout.
+	// the effective pool-specific dial timeout and upstream_http_tls_handshake_timeout.
 	AttemptTimeout time.Duration `mapstructure:"attempt_timeout"`
 }
 

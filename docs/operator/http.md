@@ -55,13 +55,31 @@ sent. See [Retry and failover](failover.md).
 | `primary_root_ca` | empty | Primary-specific CA; overrides `root_ca`. |
 | `shadow_root_ca` | empty | Shadow-specific CA; overrides `root_ca`. |
 | `insecure_upstream` | `false` | Disable TLS certificate verification for both pools. Unsafe outside controlled testing. |
-| `upstream_http_dial_timeout` | `2s` | TCP connect timeout; non-positive values become `2s`. |
+| `upstream_http_dial_timeout` | `2s` | Shared TCP connect timeout and fallback for both pools; non-positive values become `2s`. |
+| `primary_upstream_http_dial_timeout` | `0s` | Primary TCP connect timeout override; omitted or non-positive values inherit the shared timeout. |
+| `shadow_upstream_http_dial_timeout` | `0s` | Shadow TCP connect timeout override; omitted or non-positive values inherit the shared timeout. |
 | `upstream_http_tls_handshake_timeout` | `5s` | TLS handshake timeout; non-positive values become `5s`. |
 | `upstream_http_response_header_timeout` | `5s` | Time to response headers; non-positive values become `5s`. |
 | `upstream_http_max_idle_conns` | `1024` | Idle connections across all upstreams; non-positive values become `1024`. |
 | `upstream_http_max_idle_conns_per_host` | `256` | Idle connections per upstream; non-positive values become `256`. |
 | `upstream_http_max_conns_per_host` | `0` | Total connections per host; `0` is unlimited and negative values become `0`. |
 | `upstream_http_protocol` | `auto` | `auto`, `http1`, or `http2`. Invalid values are rejected. |
+
+Existing configurations keep their shared connect timeout unchanged. For example,
+to allow primary connections up to two seconds while reserving time for shadow
+failover inside a 500 ms shadow lifetime:
+
+```yaml
+upstream_http_dial_timeout: 2s
+primary_upstream_http_dial_timeout: 2s
+shadow_upstream_http_dial_timeout: 200ms
+shadow_timeout: 500ms
+```
+
+The request context can end an attempt before its connect timeout. These keys do
+not change TLS handshake or response-header timeouts, the overall shadow lifetime,
+or retry counts. Failover `max_wait` limits when another attempt may start; it is
+not an overall request deadline. The overrides apply only to HTTP, not gRPC or Milter.
 
 `auto` allows HTTP/2 negotiation when offered. `http1` disables HTTP/2.
 `http2` rejects a response if the backend negotiated HTTP/1.1. Backend

@@ -157,6 +157,12 @@ max_backend_body_bytes: 32768
 # upstream_http_dial_timeout: timeout for establishing upstream TCP connections.
 upstream_http_dial_timeout: "2s"
 
+# Optional per-pool TCP connect timeouts. Zero, negative, or omitted values inherit
+# upstream_http_dial_timeout. Keep the shadow connect budget below shadow_timeout
+# if another backend should be attempted within the shadow lifetime.
+primary_upstream_http_dial_timeout: "0s"
+shadow_upstream_http_dial_timeout: "0s"
+
 # upstream_http_tls_handshake_timeout: timeout for upstream TLS handshakes.
 upstream_http_tls_handshake_timeout: "5s"
 
